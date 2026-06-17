@@ -1,48 +1,211 @@
 {
-    "version": "2.0.0",
-    "tasks": [
-        {
-            "label": "Build PIS-CA Project",
-            "type": "shell",
-            "command": "g++",
-            "args": [
-                "-g",
-                "-std=c++17",
-                "${workspaceFolder}/src/*.cpp",
-                "-I${workspaceFolder}/include",
-                "-o",
-                "${workspaceFolder}/PIS-CA.exe"
-            ],
-            "group": {
-                "kind": "build",
-                "isDefault": true
-            },
-            "problemMatcher": ["$msCompile"],
-            "detail": "编译整个 PIS-CA 项目"
-        },
-        {
-            "label": "Build Current File",
-            "type": "shell",
-            "command": "g++",
-            "args": [
-                "-g",
-                "${file}",
-                "-I${workspaceFolder}/include",
-                "-o",
-                "${fileDirname}/${fileBasenameNoExtension}.exe"
-            ],
-            "group": "build",
-            "problemMatcher": ["$msCompile"]
-        },
-        {
-            "label": "Clean",
-            "type": "shell",
-            "command": "del",
-            "args": [
-                "${workspaceFolder}/*.exe",
-                "${workspaceFolder}/*.o"
-            ],
-            "group": "build"
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "make build dir",
+      "type": "shell",
+      "command": "cmd.exe",
+      "args": [
+        "/c",
+        "if not exist build mkdir build"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "build all smoke tests",
+      "dependsOn": [
+        "build camenisch shoup enc test",
+        "build camenisch shoup enc zkp test"
+      ],
+      "dependsOrder": "sequence",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    // {
+    //   "label": "build openssl smoke test",
+    //   "type": "shell",
+    //   "command": "Z:/MSY2/ucrt64/bin/g++.exe",
+    //   "args": [
+    //     "PIS-CA Refactor/tests/openssl_smoke_test.cpp",
+    //     "-std=c++17",
+    //     "-O2",
+    //     "-Wall",
+    //     "-Wextra",
+    //     "-I",
+    //     "Z:/MSY2/ucrt64/include",
+    //     "-L",
+    //     "Z:/MSY2/ucrt64/lib",
+    //     "-o",
+    //     "build/openssl_smoke_test.exe",
+    //     "-lssl",
+    //     "-lcrypto"
+    //   ],
+    //   "options": {
+    //     "cwd": "${workspaceFolder}",
+    //     "env": {
+    //       "PATH": "Z:/MSY2/ucrt64/bin;${env:PATH}"
+    //     }
+    //   },
+    //   "dependsOn": "make build dir",
+    //   "problemMatcher": ["$gcc"]
+    // },
+    {
+      "label": "build camenisch shoup enc test",
+      "type": "shell",
+      "command": "Z:/MSY2/ucrt64/bin/g++.exe",
+      "args": [
+        "PIS-CA Refactor/tests/camenisch_shoup_enc_test.cpp",
+        "PIS-CA Refactor/CamenischShoup/CamenischShoupEnc.cpp",
+        "-std=c++17",
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-I",
+        "Z:/MSY2/ucrt64/include",
+        "-L",
+        "Z:/MSY2/ucrt64/lib",
+        "-o",
+        "build/camenisch_shoup_enc_test.exe",
+        "-lntl",
+        "-lgmp",
+        "-lssl",
+        "-lcrypto"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PATH": "Z:/MSY2/ucrt64/bin;${env:PATH}"
         }
-    ]
+      },
+      "dependsOn": "make build dir",
+      "problemMatcher": ["$gcc"]
+    },
+    // {
+    //   "label": "build ntl smoke test",
+    //   "type": "shell",
+    //   "command": "Z:/MSY2/ucrt64/bin/g++.exe",
+    //   "args": [
+    //     "PIS-CA Refactor/tests/ntl_smoke_test.cpp",
+    //     "-std=c++17",
+    //     "-O2",
+    //     "-Wall",
+    //     "-Wextra",
+    //     "-I",
+    //     "Z:/MSY2/ucrt64/include",
+    //     "-L",
+    //     "Z:/MSY2/ucrt64/lib",
+    //     "-o",
+    //     "build/ntl_smoke_test.exe",
+    //     "-lntl",
+    //     "-lgmp"
+    //   ],
+    //   "options": {
+    //     "cwd": "${workspaceFolder}",
+    //     "env": {
+    //       "PATH": "Z:/MSY2/ucrt64/bin;${env:PATH}"
+    //     }
+    //   },
+    //   "dependsOn": "make build dir",
+    //   "problemMatcher": ["$gcc"]
+    // },
+    {
+      "label": "build camenisch shoup enc zkp test",
+      "type": "shell",
+      "command": "Z:/MSY2/ucrt64/bin/g++.exe",
+      "args": [
+        "PIS-CA Refactor/tests/camenisch_shoup_enc_zkp_test.cpp",
+        "PIS-CA Refactor/CamenischShoup/CamenischShoupEnc.cpp",
+        "PIS-CA Refactor/CamenischShoup/CamenischShoupEncZKP.cpp",
+        "-std=c++17",
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-I",
+        "Z:/MSY2/ucrt64/include",
+        "-L",
+        "Z:/MSY2/ucrt64/lib",
+        "-o",
+        "build/camenisch_shoup_enc_zkp_test.exe",
+        "-lntl",
+        "-lgmp",
+        "-lssl",
+        "-lcrypto"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PATH": "Z:/MSY2/ucrt64/bin;${env:PATH}"
+        }
+      },
+      "dependsOn": "make build dir",
+      "problemMatcher": ["$gcc"]
+    },
+    // {
+    //   "label": "run openssl smoke test",
+    //   "type": "shell",
+    //   "command": "build/openssl_smoke_test.exe",
+    //   "options": {
+    //     "cwd": "${workspaceFolder}",
+    //     "env": {
+    //       "PATH": "Z:/MSY2/ucrt64/bin;${env:PATH}"
+    //     }
+    //   },
+    //   "dependsOn": "build openssl smoke test",
+    //   "problemMatcher": []
+    // },
+    {
+      "label": "run camenisch shoup enc test",
+      "type": "shell",
+      "command": "build/camenisch_shoup_enc_test.exe",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PATH": "Z:/MSY2/ucrt64/bin;${env:PATH}"
+        }
+      },
+      "dependsOn": "build camenisch shoup enc test",
+      "problemMatcher": []
+    },
+    {
+      "label": "run camenisch shoup enc zkp test",
+      "type": "shell",
+      "command": "build/camenisch_shoup_enc_zkp_test.exe",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PATH": "Z:/MSY2/ucrt64/bin;${env:PATH}"
+        }
+      },
+      "dependsOn": "build camenisch shoup enc zkp test",
+      "problemMatcher": []
+    },
+    // {
+    //   "label": "run ntl smoke test",
+    //   "type": "shell",
+    //   "command": "build/ntl_smoke_test.exe",
+    //   "options": {
+    //     "cwd": "${workspaceFolder}",
+    //     "env": {
+    //       "PATH": "Z:/MSY2/ucrt64/bin;${env:PATH}"
+    //     }
+    //   },
+    //   "dependsOn": "build ntl smoke test",
+    //   "problemMatcher": []
+    // },
+    {
+      "label": "run all smoke tests",
+      "dependsOn": [
+        "run camenisch shoup enc test",
+        "run camenisch shoup enc zkp test"
+      ],
+      "dependsOrder": "sequence",
+      "problemMatcher": []
+    }
+  ]
 }

@@ -1,0 +1,17 @@
+{
+    "configurations": [
+        {
+            "name": "Win32-MSYS2-UCRT64",
+            "compilerPath": "Z:/MSY2/ucrt64/bin/g++.exe",
+            "intelliSenseMode": "windows-gcc-x64",
+            "cppStandard": "c++17",
+            "cStandard": "c17",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "Z:/WinNTL/WinNTL-11_6_0/WinNTL-11_6_0/include",
+                "Z:/MSY2/ucrt64/include"
+            ]
+        }
+    ],
+    "version": 4
+}

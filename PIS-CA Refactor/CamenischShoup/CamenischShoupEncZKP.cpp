@@ -1,0 +1,491 @@
+#include "CamenischShoupEncZKP.h"
+
+#include <array>
+#include <iostream>
+#include <sstream>
+#include <string>
+
+#include <openssl/sha.h>
+
+namespace
+{
+    NTL::ZZ HashToZZ(const std::string& input)
+    {
+        std::array<std::uint8_t, CamenischShoupEnc::HashBytes> digest{};
+        SHA256_CTX ctx;
+        SHA256_Init(&ctx);
+        SHA256_Update(&ctx, input.data(), input.size());
+        SHA256_Final(digest.data(), &ctx);
+
+        NTL::ZZ challenge(0);
+        for (std::uint8_t byte : digest)
+        {
+            challenge *= 256;
+            challenge += byte;
+        }
+
+        return challenge;
+    }
+
+    void AppendZZ(std::ostringstream& stream, const NTL::ZZ& value)
+    {
+        stream << value << '|';
+    }
+
+    void AppendVector(std::ostringstream& stream, const std::vector<NTL::ZZ>& values)
+    {
+        stream << values.size() << '|';
+        for (const NTL::ZZ& value : values)
+        {
+            AppendZZ(stream, value);
+        }
+    }
+
+    void AppendCiphertext(std::ostringstream& stream, const CamenischShoupEnc::Ciphertext& ciphertext)
+    {
+        AppendZZ(stream, ciphertext.u);
+        AppendVector(stream, ciphertext.e);
+    }
+
+    void AppendCiphertexts(std::ostringstream& stream, const std::vector<CamenischShoupEnc::Ciphertext>& ciphertexts)
+    {
+        stream << ciphertexts.size() << '|';
+        for (const CamenischShoupEnc::Ciphertext& ciphertext : ciphertexts)
+        {
+            AppendCiphertext(stream, ciphertext);
+        }
+    }
+}
+
+CamenischShoupEncZKP::CamenischShoupEncZKP(const CamenischShoupEnc& encryption)
+    : encryption_(encryption)
+{
+}
+
+void CamenischShoupEncZKP::GenerateCommitments(
+    const PublicKey& public_key,
+    const CommitmentKey& commitment_key,
+    const std::vector<NTL::ZZ>& plaintexts,
+    const std::vector<NTL::ZZ>& commitment_randomness,
+    std::vector<NTL::ZZ>& commitments) const
+{
+    commitments.clear();
+    commitments.reserve(commitment_randomness.size());
+
+    if (plaintexts.size() > commitment_randomness.size() * CamenischShoupEnc::PlaintextValuesPerCiphertext)
+    {
+        std::cout << "commitment plaintext size error " << std::endl;
+        return;
+    }
+
+    for (std::uint32_t batch_index = 0; batch_index < commitment_randomness.size(); ++batch_index)
+    {
+        commitments.emplace_back(GenerateCommitment(
+            public_key,
+            commitment_key,
+            plaintexts,
+            commitment_randomness[batch_index],
+            batch_index));
+    }
+}
+
+void CamenischShoupEncZKP::CreateProof(
+    const PublicKey& public_key,
+    const CommitmentKey& commitment_key,
+    const std::vector<NTL::ZZ>& plaintexts,
+    const std::vector<Ciphertext>& ciphertexts,
+    const std::vector<NTL::ZZ>& encryption_randomness,
+    const std::vector<NTL::ZZ>& commitment_randomness,
+    const std::vector<NTL::ZZ>& commitments,
+    Proof& proof) const
+{
+    proof.plaintexts = plaintexts;
+    proof.ciphertexts = ciphertexts;
+    proof.encryption_randomness = encryption_randomness;
+    proof.commitment_randomness = commitment_randomness;
+    proof.commitments = commitments;
+
+    const std::uint32_t batch_size = static_cast<std::uint32_t>(ciphertexts.size());
+    if (!HasExpectedSizes(public_key, commitment_key, ciphertexts, commitments) ||
+        encryption_randomness.size() != batch_size ||
+        commitment_randomness.size() != batch_size ||
+        plaintexts.size() > batch_size * CamenischShoupEnc::PlaintextValuesPerCiphertext)
+    {
+        std::cout << "proof input size error " << std::endl;
+        return;
+    }
+
+    proof.plaintext_randomness.clear();
+    proof.plaintext_randomness.reserve(CamenischShoupEnc::PlaintextValuesPerCiphertext);
+    for (std::uint32_t i = 0; i < CamenischShoupEnc::PlaintextValuesPerCiphertext; ++i)
+    {
+        NTL::ZZ plaintext_mask;
+        RandomBits(plaintext_mask, CamenischShoupEnc::SubPlaintextLens - 10);
+        proof.plaintext_randomness.emplace_back(plaintext_mask);
+    }
+
+    RandomBits(proof.encryption_randomness_mask, NumBits(public_key.N) - 10);
+    RandomBits(proof.commitment_randomness_mask, NumBits(public_key.N) - 10);
+
+    proof.message.ciphertexts = proof.ciphertexts;
+    proof.message.commitments = proof.commitments;
+    encryption_.EncryptWithRandomness(
+        public_key,
+        proof.plaintext_randomness,
+        proof.encryption_randomness_mask,
+        proof.message.random_ciphertext);
+    proof.message.random_commitment = GenerateCommitment(
+        public_key,
+        commitment_key,
+        proof.plaintext_randomness,
+        proof.commitment_randomness_mask,
+        0);
+
+    GenerateChallenges(
+        public_key,
+        proof.message.ciphertexts,
+        proof.message.commitments,
+        proof.message.random_ciphertext,
+        proof.message.random_commitment,
+        proof.message.challenges);
+
+    proof.message.plaintext_randomness_responses.clear();
+    proof.message.plaintext_randomness_responses.reserve(CamenischShoupEnc::PlaintextValuesPerCiphertext);
+    for (std::uint32_t slot_index = 0; slot_index < CamenischShoupEnc::PlaintextValuesPerCiphertext; ++slot_index)
+    {
+        NTL::ZZ response = proof.plaintext_randomness[slot_index];
+        for (std::uint32_t batch_index = 0; batch_index < batch_size; ++batch_index)
+        {
+            const std::uint32_t plaintext_index = batch_index * CamenischShoupEnc::PlaintextValuesPerCiphertext + slot_index;
+            const NTL::ZZ plaintext_value = plaintext_index < proof.plaintexts.size() ? proof.plaintexts[plaintext_index] : NTL::ZZ(0);
+            response += proof.message.challenges[batch_index] * plaintext_value;
+        }
+        proof.message.plaintext_randomness_responses.emplace_back(response);
+    }
+
+    proof.message.commitment_randomness_response = proof.commitment_randomness_mask;
+    proof.message.encryption_randomness_response = proof.encryption_randomness_mask;
+    for (std::uint32_t batch_index = 0; batch_index < batch_size; ++batch_index)
+    {
+        proof.message.commitment_randomness_response += proof.message.challenges[batch_index] * proof.commitment_randomness[batch_index];
+        proof.message.encryption_randomness_response += proof.message.challenges[batch_index] * proof.encryption_randomness[batch_index];
+    }
+}
+
+void CamenischShoupEncZKP::CreateProofMessage(
+    const PublicKey& public_key,
+    const CommitmentKey& commitment_key,
+    const std::vector<NTL::ZZ>& plaintexts,
+    const std::vector<Ciphertext>& ciphertexts,
+    const std::vector<NTL::ZZ>& encryption_randomness,
+    const std::vector<NTL::ZZ>& commitment_randomness,
+    const std::vector<NTL::ZZ>& commitments,
+    ProofMessage& proof_message) const
+{
+    const std::uint32_t batch_size = static_cast<std::uint32_t>(ciphertexts.size());
+    if (!HasExpectedSizes(public_key, commitment_key, ciphertexts, commitments) ||
+        encryption_randomness.size() != batch_size ||
+        commitment_randomness.size() != batch_size ||
+        plaintexts.size() > batch_size * CamenischShoupEnc::PlaintextValuesPerCiphertext)
+    {
+        std::cout << "proof input size error " << std::endl;
+        return;
+    }
+
+    proof_message.ciphertexts = ciphertexts;
+    proof_message.commitments = commitments;
+
+    std::vector<NTL::ZZ> plaintext_randomness;
+    plaintext_randomness.reserve(CamenischShoupEnc::PlaintextValuesPerCiphertext);
+    for (std::uint32_t i = 0; i < CamenischShoupEnc::PlaintextValuesPerCiphertext; ++i)
+    {
+        NTL::ZZ plaintext_mask;
+        RandomBits(plaintext_mask, CamenischShoupEnc::SubPlaintextLens - 10);
+        plaintext_randomness.emplace_back(plaintext_mask);
+    }
+
+    NTL::ZZ encryption_randomness_mask;
+    RandomBits(encryption_randomness_mask, NumBits(public_key.N) - 10);
+    encryption_.EncryptWithRandomness(
+        public_key,
+        plaintext_randomness,
+        encryption_randomness_mask,
+        proof_message.random_ciphertext);
+
+    NTL::ZZ commitment_randomness_mask;
+    RandomBits(commitment_randomness_mask, NumBits(public_key.N) - 10);
+    proof_message.random_commitment = GenerateCommitment(
+        public_key,
+        commitment_key,
+        plaintext_randomness,
+        commitment_randomness_mask,
+        0);
+
+    GenerateChallenges(
+        public_key,
+        proof_message.ciphertexts,
+        proof_message.commitments,
+        proof_message.random_ciphertext,
+        proof_message.random_commitment,
+        proof_message.challenges);
+
+    proof_message.plaintext_randomness_responses.clear();
+    proof_message.plaintext_randomness_responses.reserve(CamenischShoupEnc::PlaintextValuesPerCiphertext);
+    for (std::uint32_t slot_index = 0; slot_index < CamenischShoupEnc::PlaintextValuesPerCiphertext; ++slot_index)
+    {
+        NTL::ZZ response = plaintext_randomness[slot_index];
+        for (std::uint32_t batch_index = 0; batch_index < batch_size; ++batch_index)
+        {
+            const std::uint32_t plaintext_index = batch_index * CamenischShoupEnc::PlaintextValuesPerCiphertext + slot_index;
+            const NTL::ZZ plaintext_value = plaintext_index < plaintexts.size() ? plaintexts[plaintext_index] : NTL::ZZ(0);
+            response += proof_message.challenges[batch_index] * plaintext_value;
+        }
+        proof_message.plaintext_randomness_responses.emplace_back(response);
+    }
+
+    proof_message.commitment_randomness_response = commitment_randomness_mask;
+    proof_message.encryption_randomness_response = encryption_randomness_mask;
+    for (std::uint32_t batch_index = 0; batch_index < batch_size; ++batch_index)
+    {
+        proof_message.commitment_randomness_response += proof_message.challenges[batch_index] * commitment_randomness[batch_index];
+        proof_message.encryption_randomness_response += proof_message.challenges[batch_index] * encryption_randomness[batch_index];
+    }
+}
+
+void CamenischShoupEncZKP::GenerateCommitmentsAndProof(
+    const PublicKey& public_key,
+    const CommitmentKey& commitment_key,
+    const std::vector<NTL::ZZ>& plaintexts,
+    const std::vector<Ciphertext>& ciphertexts,
+    const std::vector<NTL::ZZ>& encryption_randomness,
+    std::vector<NTL::ZZ>& commitment_randomness,
+    std::vector<NTL::ZZ>& commitments,
+    Proof& proof) const
+{
+    const std::uint32_t batch_size = static_cast<std::uint32_t>(ciphertexts.size());
+    commitment_randomness.clear();
+    commitment_randomness.reserve(batch_size);
+    for (std::uint32_t i = 0; i < batch_size; ++i)
+    {
+        NTL::ZZ randomness;
+        RandomBits(randomness, NumBits(public_key.N) - 10);
+        commitment_randomness.emplace_back(randomness);
+    }
+
+    GenerateCommitments(public_key, commitment_key, plaintexts, commitment_randomness, commitments);
+    CreateProof(
+        public_key,
+        commitment_key,
+        plaintexts,
+        ciphertexts,
+        encryption_randomness,
+        commitment_randomness,
+        commitments,
+        proof);
+}
+
+bool CamenischShoupEncZKP::VerifyProof(
+    const PublicKey& public_key,
+    const CommitmentKey& commitment_key,
+    const ProofMessage& proof_message) const
+{
+    return VerifyProof(
+        public_key,
+        commitment_key,
+        proof_message.ciphertexts,
+        proof_message.commitments,
+        proof_message);
+}
+
+bool CamenischShoupEncZKP::VerifyProof(
+    const PublicKey& public_key,
+    const CommitmentKey& commitment_key,
+    const std::vector<Ciphertext>& ciphertexts,
+    const std::vector<NTL::ZZ>& commitments,
+    const ProofMessage& proof_message) const
+{
+    const std::uint32_t batch_size = static_cast<std::uint32_t>(ciphertexts.size());
+    if (!HasExpectedSizes(public_key, commitment_key, ciphertexts, commitments) ||
+        proof_message.ciphertexts.size() != batch_size ||
+        proof_message.commitments != commitments ||
+        proof_message.random_ciphertext.e.size() != CamenischShoupEnc::CiphertextEComponentCount ||
+        proof_message.challenges.size() != batch_size ||
+        proof_message.plaintext_randomness_responses.size() != CamenischShoupEnc::PlaintextValuesPerCiphertext)
+    {
+        return false;
+    }
+
+    for (std::uint32_t batch_index = 0; batch_index < batch_size; ++batch_index)
+    {
+        if (proof_message.ciphertexts[batch_index].u != ciphertexts[batch_index].u ||
+            proof_message.ciphertexts[batch_index].e != ciphertexts[batch_index].e)
+        {
+            return false;
+        }
+    }
+
+    std::vector<NTL::ZZ> challenges;
+    GenerateChallenges(
+        public_key,
+        ciphertexts,
+        commitments,
+        proof_message.random_ciphertext,
+        proof_message.random_commitment,
+        challenges);
+
+    if (challenges != proof_message.challenges)
+    {
+        return false;
+    }
+
+    const NTL::ZZ commitment_modulus = public_key.N * public_key.N;
+    const NTL::ZZ commitment_left = GenerateCommitment(
+        public_key,
+        commitment_key,
+        proof_message.plaintext_randomness_responses,
+        proof_message.commitment_randomness_response,
+        0);
+
+    NTL::ZZ commitment_right = proof_message.random_commitment;
+    for (std::uint32_t batch_index = 0; batch_index < batch_size; ++batch_index)
+    {
+        const NTL::ZZ commitment_challenge = PowerMod(commitments[batch_index], challenges[batch_index], commitment_modulus);
+        commitment_right = MulMod(commitment_right, commitment_challenge, commitment_modulus);
+    }
+
+    if (commitment_left != commitment_right)
+    {
+        return false;
+    }
+
+    Ciphertext encryption_left;
+    encryption_.EncryptWithRandomness(
+        public_key,
+        proof_message.plaintext_randomness_responses,
+        proof_message.encryption_randomness_response,
+        encryption_left);
+
+    Ciphertext encryption_right = proof_message.random_ciphertext;
+    for (std::uint32_t batch_index = 0; batch_index < batch_size; ++batch_index)
+    {
+        Ciphertext encrypted_challenge;
+        encryption_.ScalarMultiply(public_key, encrypted_challenge, ciphertexts[batch_index], challenges[batch_index]);
+
+        Ciphertext next_encryption_right;
+        encryption_.HomomorphicAdd(public_key, next_encryption_right, encryption_right, encrypted_challenge);
+        encryption_right = next_encryption_right;
+    }
+
+    if (encryption_left.u != encryption_right.u || encryption_left.e.size() != encryption_right.e.size())
+    {
+        return false;
+    }
+
+    for (std::uint32_t i = 0; i < encryption_left.e.size(); ++i)
+    {
+        if (encryption_left.e[i] != encryption_right.e[i])
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+NTL::ZZ CamenischShoupEncZKP::GenerateCommitment(
+    const PublicKey& public_key,
+    const CommitmentKey& commitment_key,
+    const std::vector<NTL::ZZ>& plaintexts,
+    const NTL::ZZ& commitment_randomness,
+    std::uint32_t batch_index) const
+{
+    const NTL::ZZ commitment_modulus = public_key.N * public_key.N;
+    NTL::ZZ commitment = PowerMod(commitment_key.h, commitment_randomness, commitment_modulus);
+    const std::uint32_t first_slot = batch_index * CamenischShoupEnc::PlaintextValuesPerCiphertext;
+
+    for (std::uint32_t component_index = 0; component_index < CamenischShoupEnc::CiphertextEComponentCount; ++component_index)
+    {
+        const std::uint32_t component_first_slot = first_slot + component_index * CamenischShoupEnc::PlaintextSlots;
+        const std::uint32_t generator_first_slot = component_index * CamenischShoupEnc::PlaintextSlots;
+        for (std::uint32_t slot_index = 0; slot_index < CamenischShoupEnc::PlaintextSlots && component_first_slot + slot_index < plaintexts.size(); ++slot_index)
+        {
+            const NTL::ZZ commitment_factor = PowerMod(
+                commitment_key.generators[generator_first_slot + slot_index],
+                plaintexts[component_first_slot + slot_index],
+                commitment_modulus);
+            commitment = MulMod(commitment, commitment_factor, commitment_modulus);
+        }
+    }
+
+    return commitment;
+}
+
+NTL::ZZ CamenischShoupEncZKP::GenerateChallenge(
+    const PublicKey& public_key,
+    const std::vector<Ciphertext>& ciphertexts,
+    const std::vector<NTL::ZZ>& commitments,
+    const Ciphertext& random_ciphertext,
+    const NTL::ZZ& random_commitment,
+    std::uint32_t challenge_index) const
+{
+    std::ostringstream stream;
+    AppendZZ(stream, public_key.N);
+    AppendZZ(stream, public_key.N_zeta_plus_one);
+    AppendZZ(stream, public_key.T);
+    AppendZZ(stream, public_key.g);
+    AppendVector(stream, public_key.pk);
+    AppendCiphertexts(stream, ciphertexts);
+    AppendVector(stream, commitments);
+    AppendCiphertext(stream, random_ciphertext);
+    AppendZZ(stream, random_commitment);
+    stream << challenge_index << '|';
+
+    return HashToZZ(stream.str());
+}
+
+void CamenischShoupEncZKP::GenerateChallenges(
+    const PublicKey& public_key,
+    const std::vector<Ciphertext>& ciphertexts,
+    const std::vector<NTL::ZZ>& commitments,
+    const Ciphertext& random_ciphertext,
+    const NTL::ZZ& random_commitment,
+    std::vector<NTL::ZZ>& challenges) const
+{
+    challenges.clear();
+    challenges.reserve(ciphertexts.size());
+    for (std::uint32_t i = 0; i < ciphertexts.size(); ++i)
+    {
+        challenges.emplace_back(GenerateChallenge(
+            public_key,
+            ciphertexts,
+            commitments,
+            random_ciphertext,
+            random_commitment,
+            i));
+    }
+}
+
+bool CamenischShoupEncZKP::HasExpectedSizes(
+    const PublicKey& public_key,
+    const CommitmentKey& commitment_key,
+    const std::vector<Ciphertext>& ciphertexts,
+    const std::vector<NTL::ZZ>& commitments) const
+{
+    if (public_key.pk.size() != CamenischShoupEnc::CiphertextEComponentCount ||
+        commitment_key.generators.size() < CamenischShoupEnc::CommitmentGeneratorCount ||
+        ciphertexts.empty() ||
+        commitments.size() != ciphertexts.size())
+    {
+        return false;
+    }
+
+    for (const Ciphertext& ciphertext : ciphertexts)
+    {
+        if (ciphertext.e.size() != CamenischShoupEnc::CiphertextEComponentCount)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
