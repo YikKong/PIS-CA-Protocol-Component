@@ -52,7 +52,7 @@ public:
         const std::vector<NTL::ZZ>& commitment_randomness,
         std::vector<NTL::ZZ>& commitments) const;
 
-    void CreateProof(
+    void CreateEncProof(
         const PublicKey& public_key,
         const CommitmentKey& commitment_key,
         const std::vector<NTL::ZZ>& plaintexts,
@@ -62,7 +62,7 @@ public:
         const std::vector<NTL::ZZ>& commitments,
         Proof& proof) const;
 
-    void CreateProofMessage(
+    void CreateEncProofMessage(
         const PublicKey& public_key,
         const CommitmentKey& commitment_key,
         const std::vector<NTL::ZZ>& plaintexts,
@@ -72,7 +72,7 @@ public:
         const std::vector<NTL::ZZ>& commitments,
         ProofMessage& proof_message) const;
 
-    void GenerateCommitmentsAndProof(
+    void GenerateCommitmentsAndEncProof(
         const PublicKey& public_key,
         const CommitmentKey& commitment_key,
         const std::vector<NTL::ZZ>& plaintexts,
@@ -82,12 +82,12 @@ public:
         std::vector<NTL::ZZ>& commitments,
         Proof& proof) const;
 
-    bool VerifyProof(
+    bool VerifyEncProof(
         const PublicKey& public_key,
         const CommitmentKey& commitment_key,
         const ProofMessage& proof_message) const;
 
-    bool VerifyProof(
+    bool VerifyEncProof(
         const PublicKey& public_key,
         const CommitmentKey& commitment_key,
         const std::vector<Ciphertext>& ciphertexts,

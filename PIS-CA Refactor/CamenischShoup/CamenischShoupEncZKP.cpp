@@ -89,7 +89,7 @@ void CamenischShoupEncZKP::GenerateCommitments(
     }
 }
 
-void CamenischShoupEncZKP::CreateProof(
+void CamenischShoupEncZKP::CreateEncProof(
     const PublicKey& public_key,
     const CommitmentKey& commitment_key,
     const std::vector<NTL::ZZ>& plaintexts,
@@ -172,7 +172,7 @@ void CamenischShoupEncZKP::CreateProof(
     }
 }
 
-void CamenischShoupEncZKP::CreateProofMessage(
+void CamenischShoupEncZKP::CreateEncProofMessage(
     const PublicKey& public_key,
     const CommitmentKey& commitment_key,
     const std::vector<NTL::ZZ>& plaintexts,
@@ -252,7 +252,7 @@ void CamenischShoupEncZKP::CreateProofMessage(
     }
 }
 
-void CamenischShoupEncZKP::GenerateCommitmentsAndProof(
+void CamenischShoupEncZKP::GenerateCommitmentsAndEncProof(
     const PublicKey& public_key,
     const CommitmentKey& commitment_key,
     const std::vector<NTL::ZZ>& plaintexts,
@@ -273,7 +273,7 @@ void CamenischShoupEncZKP::GenerateCommitmentsAndProof(
     }
 
     GenerateCommitments(public_key, commitment_key, plaintexts, commitment_randomness, commitments);
-    CreateProof(
+    CreateEncProof(
         public_key,
         commitment_key,
         plaintexts,
@@ -284,12 +284,12 @@ void CamenischShoupEncZKP::GenerateCommitmentsAndProof(
         proof);
 }
 
-bool CamenischShoupEncZKP::VerifyProof(
+bool CamenischShoupEncZKP::VerifyEncProof(
     const PublicKey& public_key,
     const CommitmentKey& commitment_key,
     const ProofMessage& proof_message) const
 {
-    return VerifyProof(
+    return VerifyEncProof(
         public_key,
         commitment_key,
         proof_message.ciphertexts,
@@ -297,7 +297,7 @@ bool CamenischShoupEncZKP::VerifyProof(
         proof_message);
 }
 
-bool CamenischShoupEncZKP::VerifyProof(
+bool CamenischShoupEncZKP::VerifyEncProof(
     const PublicKey& public_key,
     const CommitmentKey& commitment_key,
     const std::vector<Ciphertext>& ciphertexts,

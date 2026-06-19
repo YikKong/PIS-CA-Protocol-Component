@@ -64,7 +64,7 @@ int main()
     all_passed = ExpectEqual(zkp_commitments, enc.input_commitments, "ZKP recomputes Enc input commitments") && all_passed;
 
     CamenischShoupEncZKP::Proof proof;
-    zkp.CreateProof(
+    zkp.CreateEncProof(
         public_key,
         commitment_key,
         enc.input_plaintexts,
@@ -74,15 +74,15 @@ int main()
         enc.input_commitments,
         proof);
 
-    all_passed = ExpectEqual(proof.plaintexts, enc.input_plaintexts, "CreateProof stores Enc plaintext set") && all_passed;
-    all_passed = ExpectTrue(proof.ciphertexts.size() == enc.input_ciphertexts.size(), "CreateProof stores Enc ciphertext set") && all_passed;
-    all_passed = ExpectEqual(proof.encryption_randomness, enc.input_encryption_randomness, "CreateProof stores Enc encryption randomness set") && all_passed;
-    all_passed = ExpectEqual(proof.commitment_randomness, enc.input_commitment_randomness, "CreateProof stores Enc commitment randomness set") && all_passed;
-    all_passed = ExpectEqual(proof.commitments, enc.input_commitments, "CreateProof stores Enc commitment set") && all_passed;
+    all_passed = ExpectEqual(proof.plaintexts, enc.input_plaintexts, "CreateEncProof stores Enc plaintext set") && all_passed;
+    all_passed = ExpectTrue(proof.ciphertexts.size() == enc.input_ciphertexts.size(), "CreateEncProof stores Enc ciphertext set") && all_passed;
+    all_passed = ExpectEqual(proof.encryption_randomness, enc.input_encryption_randomness, "CreateEncProof stores Enc encryption randomness set") && all_passed;
+    all_passed = ExpectEqual(proof.commitment_randomness, enc.input_commitment_randomness, "CreateEncProof stores Enc commitment randomness set") && all_passed;
+    all_passed = ExpectEqual(proof.commitments, enc.input_commitments, "CreateEncProof stores Enc commitment set") && all_passed;
 
-    all_passed = ExpectTrue(proof.plaintext_randomness.size() == CamenischShoupEnc::PlaintextValuesPerCiphertext, "CreateProof stores plaintext mask") && all_passed;
-    all_passed = ExpectTrue(proof.encryption_randomness_mask > 0, "CreateProof stores encryption randomness mask") && all_passed;
-    all_passed = ExpectTrue(proof.commitment_randomness_mask > 0, "CreateProof stores commitment randomness mask") && all_passed;
+    all_passed = ExpectTrue(proof.plaintext_randomness.size() == CamenischShoupEnc::PlaintextValuesPerCiphertext, "CreateEncProof stores plaintext mask") && all_passed;
+    all_passed = ExpectTrue(proof.encryption_randomness_mask > 0, "CreateEncProof stores encryption randomness mask") && all_passed;
+    all_passed = ExpectTrue(proof.commitment_randomness_mask > 0, "CreateEncProof stores commitment randomness mask") && all_passed;
 
     all_passed = ExpectTrue(proof.message.ciphertexts.size() == enc.input_ciphertexts.size(), "ProofMessage carries ciphertext set") && all_passed;
     all_passed = ExpectEqual(proof.message.commitments, enc.input_commitments, "ProofMessage carries commitment set") && all_passed;
@@ -94,17 +94,17 @@ int main()
     all_passed = ExpectTrue(proof.message.encryption_randomness_response > 0, "ProofMessage carries encryption randomness response") && all_passed;
 
     all_passed = ExpectTrue(
-        zkp.VerifyProof(public_key, commitment_key, proof.message),
-        "VerifyProof accepts proof message generated from Enc inputs") && all_passed;
+        zkp.VerifyEncProof(public_key, commitment_key, proof.message),
+        "VerifyEncProof accepts proof message generated from Enc inputs") && all_passed;
     all_passed = ExpectTrue(
-        zkp.VerifyProof(public_key, commitment_key, enc.input_ciphertexts, enc.input_commitments, proof.message),
-        "VerifyProof accepts proof message with external Enc inputs") && all_passed;
+        zkp.VerifyEncProof(public_key, commitment_key, enc.input_ciphertexts, enc.input_commitments, proof.message),
+        "VerifyEncProof accepts proof message with external Enc inputs") && all_passed;
 
     CamenischShoupEncZKP::ProofMessage tampered_message = proof.message;
     tampered_message.plaintext_randomness_responses[0] += 1;
     all_passed = ExpectTrue(
-        !zkp.VerifyProof(public_key, commitment_key, tampered_message),
-        "VerifyProof rejects tampered plaintext response") && all_passed;
+        !zkp.VerifyEncProof(public_key, commitment_key, tampered_message),
+        "VerifyEncProof rejects tampered plaintext response") && all_passed;
 
     if (!all_passed)
     {
