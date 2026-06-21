@@ -18,12 +18,13 @@
       "label": "build all smoke tests",
       "dependsOn": [
         "build camenisch shoup enc test",
-        "build camenisch shoup enc zkp test"
+        "build camenisch shoup enc zkp test",
+        "build elgamal enc test"
       ],
       "dependsOrder": "sequence",
       "group": {
         "kind": "build",
-        "isDefault": true
+        "isDefault": false
       },
       "problemMatcher": []
     },
@@ -115,6 +116,38 @@
     //   "problemMatcher": ["$gcc"]
     // },
     {
+      "label": "build elgamal enc test",
+      "type": "process",
+      "command": "Z:/MSY2/ucrt64/bin/g++.exe",
+      "args": [
+        "${workspaceFolder}/PIS-CA Refactor/tests/elgamal_enc_test.cpp",
+        "${workspaceFolder}/PIS-CA Refactor/ElGamal/ElGamalEnc.cpp",
+        "-std=c++17",
+        "-O0",
+        "-Wall",
+        "-Wextra",
+        "-I",
+        "Z:/MSY2/ucrt64/include",
+        "-L",
+        "Z:/MSY2/ucrt64/lib",
+        "-o",
+        "${workspaceFolder}/build/elgamal_enc_test.exe",
+        "-lcrypto"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PATH": "Z:/MSY2/ucrt64/bin;${env:PATH}"
+        }
+      },
+      "dependsOn": "make build dir",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": ["$gcc"]
+    },
+    {
       "label": "build camenisch shoup enc zkp test",
       "type": "shell",
       "command": "Z:/MSY2/ucrt64/bin/g++.exe",
@@ -173,6 +206,19 @@
       "problemMatcher": []
     },
     {
+      "label": "run elgamal enc test",
+      "type": "shell",
+      "command": "build/elgamal_enc_test.exe",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PATH": "Z:/MSY2/ucrt64/bin;${env:PATH}"
+        }
+      },
+      "dependsOn": "build elgamal enc test",
+      "problemMatcher": []
+    },
+    {
       "label": "run camenisch shoup enc zkp test",
       "type": "shell",
       "command": "build/camenisch_shoup_enc_zkp_test.exe",
@@ -202,7 +248,8 @@
       "label": "run all smoke tests",
       "dependsOn": [
         "run camenisch shoup enc test",
-        "run camenisch shoup enc zkp test"
+        "run camenisch shoup enc zkp test",
+        "run elgamal enc test"
       ],
       "dependsOrder": "sequence",
       "problemMatcher": []
