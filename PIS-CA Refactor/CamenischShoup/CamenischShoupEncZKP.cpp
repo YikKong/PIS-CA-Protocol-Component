@@ -489,3 +489,471 @@ bool CamenischShoupEncZKP::HasExpectedSizes(
 
     return true;
 }
+
+NTL::ZZ CamenischShoupEncZKP::GenerateVectorCommitment(
+    const PublicKey& public_key,
+    const CommitmentKey& commitment_key,
+    const std::vector<NTL::ZZ>& values,
+    const NTL::ZZ& randomness) const
+{
+    const NTL::ZZ modulus = public_key.N * public_key.N;
+    NTL::ZZ commitment = PowerMod(commitment_key.h, randomness, modulus);
+    for (std::uint32_t i = 0; i < values.size(); ++i)
+    {
+        commitment = MulMod(
+            commitment,
+            PowerMod(commitment_key.generators[i], values[i], modulus),
+            modulus);
+    }
+    return commitment;
+}
+
+NTL::ZZ CamenischShoupEncZKP::PackBatchValues(
+    const PublicKey& public_key,
+    const std::vector<NTL::ZZ>& values) const
+{
+    NTL::ZZ packed(0);
+    for (std::uint32_t i = 0; i < values.size(); ++i)
+    {
+        packed += values[i] * power(public_key.plaintext_packing_base, i);
+    }
+    return packed;
+}
+
+CamenischShoupEncZKP::Ciphertext CamenischShoupEncZKP::EvaluateBetaCiphertext(
+    const PublicKey& public_key,
+    const Ciphertext& base_ciphertext,
+    const std::vector<NTL::ZZ>& a,
+    const std::vector<NTL::ZZ>& alpha,
+    const std::vector<NTL::ZZ>& b,
+    const NTL::ZZ& q,
+    const NTL::ZZ& encryption_randomness) const
+{
+    std::vector<NTL::ZZ> additive_plaintext;
+    additive_plaintext.reserve(alpha.size());
+    for (std::uint32_t i = 0; i < alpha.size(); ++i)
+    {
+        additive_plaintext.emplace_back(alpha[i] + q * b[i]);
+    }
+
+    Ciphertext result;
+    encryption_.EncryptWithRandomness(
+        public_key,
+        additive_plaintext,
+        encryption_randomness,
+        result);
+
+    Ciphertext scaled_base;
+    Ciphertext accumulated;
+    encryption_.ScalarMultiply(
+        public_key,
+        scaled_base,
+        base_ciphertext,
+        PackBatchValues(public_key, a));
+    encryption_.HomomorphicAdd(public_key, accumulated, result, scaled_base);
+    result = accumulated;
+    return result;
+}
+
+void CamenischShoupEncZKP::CreateBatchBetaCiphertextsAndProof(
+    const PublicKey& public_key,
+    const CommitmentKey& commitment_key,
+    const Ciphertext& base_ciphertext,
+    const NTL::ZZ& q,
+    const std::vector<NTL::ZZ>& a,
+    const std::vector<NTL::ZZ>& alpha,
+    const std::vector<NTL::ZZ>& b,
+    const std::vector<NTL::ZZ>& a_commitment_randomness,
+    const std::vector<NTL::ZZ>& alpha_commitment_randomness,
+    const std::vector<NTL::ZZ>& b_commitment_randomness,
+    const std::vector<NTL::ZZ>& encryption_randomness,
+    BatchBetaProof& proof) const
+{
+    static_assert(
+        CamenischShoupEnc::CiphertextEComponentCount == 1,
+        "BatchBeta proof assumes one ciphertext e component");
+
+    proof = BatchBetaProof{};
+    proof.a = a;
+    proof.alpha = alpha;
+    proof.b = b;
+    proof.a_commitment_randomness = a_commitment_randomness;
+    proof.alpha_commitment_randomness = alpha_commitment_randomness;
+    proof.b_commitment_randomness = b_commitment_randomness;
+    proof.encryption_randomness = encryption_randomness;
+    BatchBetaProofMessage& proof_message = proof.message;
+
+    const std::uint32_t output_count =
+        static_cast<std::uint32_t>(encryption_randomness.size());
+    const std::uint32_t slot_count = CamenischShoupEnc::PlaintextValuesPerCiphertext;
+    const long value_mask_bits = CamenischShoupEnc::SubPlaintextLens - 10;
+    const long b_mask_bits = value_mask_bits - NumBits(q);
+
+    if (output_count == 0 ||
+        q < 0 ||
+        b_mask_bits <= 0 ||
+        commitment_key.generators.size() < slot_count ||
+        a.size() != output_count * slot_count ||
+        alpha.size() != output_count * slot_count ||
+        b.size() != output_count * slot_count ||
+        a_commitment_randomness.size() != output_count ||
+        alpha_commitment_randomness.size() != output_count ||
+        b_commitment_randomness.size() != output_count)
+    {
+        std::cout << "batch beta proof input size error " << std::endl;
+        return;
+    }
+
+    if (!IsValidCiphertext(public_key, base_ciphertext))
+    {
+        std::cout << "batch beta base input error " << std::endl;
+        return;
+    }
+    for (const NTL::ZZ& value : a)
+    {
+        if (value < 0 || value >= public_key.plaintext_packing_base)
+        {
+            std::cout << "batch beta a slot range error " << std::endl;
+            return;
+        }
+    }
+    for (std::uint32_t i = 0; i < alpha.size(); ++i)
+    {
+        if (alpha[i] < 0 ||
+            b[i] < 0 ||
+            alpha[i] + q * b[i] >= public_key.plaintext_packing_base)
+        {
+            std::cout << "batch beta alpha plus q times b slot range error " << std::endl;
+            return;
+        }
+    }
+
+    proof_message.base_ciphertext = base_ciphertext;
+    proof_message.q = q;
+    proof_message.a_commitments.reserve(output_count);
+    proof_message.alpha_commitments.reserve(output_count);
+    proof_message.b_commitments.reserve(output_count);
+    proof_message.beta_ciphertexts.reserve(output_count);
+
+    proof.a_masks.reserve(a.size());
+    for (std::uint32_t s = 0; s < output_count; ++s)
+    {
+        const auto a_begin = a.begin() + s * slot_count;
+        const std::vector<NTL::ZZ> a_slice(a_begin, a_begin + slot_count);
+        const auto alpha_begin = alpha.begin() + s * slot_count;
+        const std::vector<NTL::ZZ> alpha_slice(alpha_begin, alpha_begin + slot_count);
+        const auto b_begin = b.begin() + s * slot_count;
+        const std::vector<NTL::ZZ> b_slice(b_begin, b_begin + slot_count);
+
+        proof_message.a_commitments.emplace_back(GenerateVectorCommitment(
+            public_key,
+            commitment_key,
+            a_slice,
+            a_commitment_randomness[s]));
+        proof_message.alpha_commitments.emplace_back(GenerateVectorCommitment(
+            public_key,
+            commitment_key,
+            alpha_slice,
+            alpha_commitment_randomness[s]));
+        proof_message.b_commitments.emplace_back(GenerateVectorCommitment(
+            public_key,
+            commitment_key,
+            b_slice,
+            b_commitment_randomness[s]));
+        proof_message.beta_ciphertexts.emplace_back(EvaluateBetaCiphertext(
+            public_key,
+            base_ciphertext,
+            a_slice,
+            alpha_slice,
+            b_slice,
+            q,
+            encryption_randomness[s]));
+    }
+
+    proof.a_masks.clear();
+    proof.alpha_masks.clear();
+    proof.b_masks.clear();
+    proof.a_masks.reserve(slot_count);
+    proof.alpha_masks.reserve(slot_count);
+    proof.b_masks.reserve(slot_count);
+    for (std::uint32_t i = 0; i < slot_count; ++i)
+    {
+        NTL::ZZ a_mask;
+        NTL::ZZ alpha_mask;
+        NTL::ZZ b_mask;
+        RandomBits(a_mask, value_mask_bits);
+        RandomBits(alpha_mask, value_mask_bits);
+        RandomBits(b_mask, b_mask_bits);
+        proof.a_masks.emplace_back(a_mask);
+        proof.alpha_masks.emplace_back(alpha_mask);
+        proof.b_masks.emplace_back(b_mask);
+    }
+
+    RandomBits(proof.a_commitment_randomness_mask, 2 * CamenischShoupEnc::PrimeBits);
+    RandomBits(proof.alpha_commitment_randomness_mask, 2 * CamenischShoupEnc::PrimeBits);
+    RandomBits(proof.b_commitment_randomness_mask, 2 * CamenischShoupEnc::PrimeBits);
+    RandomBits(proof.encryption_randomness_mask, 2 * CamenischShoupEnc::PrimeBits);
+
+    proof_message.random_a_commitment = GenerateVectorCommitment(
+        public_key,
+        commitment_key,
+        proof.a_masks,
+        proof.a_commitment_randomness_mask);
+    proof_message.random_alpha_commitment = GenerateVectorCommitment(
+        public_key,
+        commitment_key,
+        proof.alpha_masks,
+        proof.alpha_commitment_randomness_mask);
+    proof_message.random_b_commitment = GenerateVectorCommitment(
+        public_key,
+        commitment_key,
+        proof.b_masks,
+        proof.b_commitment_randomness_mask);
+    proof_message.random_beta_ciphertext = EvaluateBetaCiphertext(
+        public_key,
+        base_ciphertext,
+        proof.a_masks,
+        proof.alpha_masks,
+        proof.b_masks,
+        q,
+        proof.encryption_randomness_mask);
+
+    proof_message.challenges.reserve(output_count);
+    for (std::uint32_t s = 0; s < output_count; ++s)
+    {
+        proof_message.challenges.emplace_back(GenerateBatchBetaChallenge(
+            public_key,
+            commitment_key,
+            proof_message,
+            s));
+    }
+
+    proof_message.a_responses = proof.a_masks;
+    proof_message.alpha_responses = proof.alpha_masks;
+    proof_message.b_responses = proof.b_masks;
+    proof_message.a_commitment_randomness_response =
+        proof.a_commitment_randomness_mask;
+    proof_message.alpha_commitment_randomness_response =
+        proof.alpha_commitment_randomness_mask;
+    proof_message.b_commitment_randomness_response =
+        proof.b_commitment_randomness_mask;
+    proof_message.encryption_randomness_response =
+        proof.encryption_randomness_mask;
+
+    for (std::uint32_t s = 0; s < output_count; ++s)
+    {
+        const NTL::ZZ& challenge = proof_message.challenges[s];
+        for (std::uint32_t i = 0; i < slot_count; ++i)
+        {
+            const std::uint32_t index = s * slot_count + i;
+            proof_message.a_responses[i] += challenge * a[index];
+            proof_message.alpha_responses[i] += challenge * alpha[index];
+            proof_message.b_responses[i] += challenge * b[index];
+        }
+        proof_message.a_commitment_randomness_response +=
+            challenge * a_commitment_randomness[s];
+        proof_message.alpha_commitment_randomness_response +=
+            challenge * alpha_commitment_randomness[s];
+        proof_message.b_commitment_randomness_response +=
+            challenge * b_commitment_randomness[s];
+        proof_message.encryption_randomness_response +=
+            challenge * encryption_randomness[s];
+    }
+}
+
+bool CamenischShoupEncZKP::VerifyBatchBetaProof(
+    const PublicKey& public_key,
+    const CommitmentKey& commitment_key,
+    const BatchBetaProofMessage& proof_message) const
+{
+    static_assert(
+        CamenischShoupEnc::CiphertextEComponentCount == 1,
+        "BatchBeta proof assumes one ciphertext e component");
+
+    const std::uint32_t output_count =
+        static_cast<std::uint32_t>(proof_message.beta_ciphertexts.size());
+    const std::uint32_t slot_count = CamenischShoupEnc::PlaintextValuesPerCiphertext;
+
+    if (output_count == 0 ||
+        proof_message.q < 0 ||
+        commitment_key.generators.size() < slot_count ||
+        proof_message.a_commitments.size() != output_count ||
+        proof_message.alpha_commitments.size() != output_count ||
+        proof_message.b_commitments.size() != output_count ||
+        proof_message.challenges.size() != output_count ||
+        proof_message.a_responses.size() != slot_count ||
+        proof_message.alpha_responses.size() != slot_count ||
+        proof_message.b_responses.size() != slot_count)
+    {
+        return false;
+    }
+
+    if (!IsValidCiphertext(public_key, proof_message.base_ciphertext) ||
+        !IsValidCiphertext(public_key, proof_message.random_beta_ciphertext) ||
+        !IsValidCommitment(public_key, proof_message.random_a_commitment) ||
+        !IsValidCommitment(public_key, proof_message.random_alpha_commitment) ||
+        !IsValidCommitment(public_key, proof_message.random_b_commitment))
+    {
+        return false;
+    }
+
+    const NTL::ZZ commitment_modulus = public_key.N * public_key.N;
+    NTL::ZZ a_right = proof_message.random_a_commitment;
+    NTL::ZZ alpha_right = proof_message.random_alpha_commitment;
+    NTL::ZZ b_right = proof_message.random_b_commitment;
+    Ciphertext beta_right = proof_message.random_beta_ciphertext;
+
+    for (std::uint32_t s = 0; s < output_count; ++s)
+    {
+        if (!IsValidCiphertext(public_key, proof_message.beta_ciphertexts[s]) ||
+            !IsValidCommitment(public_key, proof_message.a_commitments[s]) ||
+            !IsValidCommitment(public_key, proof_message.alpha_commitments[s]) ||
+            !IsValidCommitment(public_key, proof_message.b_commitments[s]))
+        {
+            return false;
+        }
+
+        const NTL::ZZ expected_challenge = GenerateBatchBetaChallenge(
+            public_key,
+            commitment_key,
+            proof_message,
+            s);
+        if (proof_message.challenges[s] != expected_challenge)
+        {
+            return false;
+        }
+
+        a_right = MulMod(
+            a_right,
+            PowerMod(
+                proof_message.a_commitments[s],
+                expected_challenge,
+                commitment_modulus),
+            commitment_modulus);
+        alpha_right = MulMod(
+            alpha_right,
+            PowerMod(
+                proof_message.alpha_commitments[s],
+                expected_challenge,
+                commitment_modulus),
+            commitment_modulus);
+        b_right = MulMod(
+            b_right,
+            PowerMod(
+                proof_message.b_commitments[s],
+                expected_challenge,
+                commitment_modulus),
+            commitment_modulus);
+
+        Ciphertext challenged_beta;
+        Ciphertext accumulated_beta;
+        encryption_.ScalarMultiply(
+            public_key,
+            challenged_beta,
+            proof_message.beta_ciphertexts[s],
+            expected_challenge);
+        encryption_.HomomorphicAdd(
+            public_key,
+            accumulated_beta,
+            beta_right,
+            challenged_beta);
+        beta_right = accumulated_beta;
+    }
+
+    const NTL::ZZ a_left = GenerateVectorCommitment(
+        public_key,
+        commitment_key,
+        proof_message.a_responses,
+        proof_message.a_commitment_randomness_response);
+    const NTL::ZZ alpha_left = GenerateVectorCommitment(
+        public_key,
+        commitment_key,
+        proof_message.alpha_responses,
+        proof_message.alpha_commitment_randomness_response);
+    const NTL::ZZ b_left = GenerateVectorCommitment(
+        public_key,
+        commitment_key,
+        proof_message.b_responses,
+        proof_message.b_commitment_randomness_response);
+    if (a_left != a_right || alpha_left != alpha_right || b_left != b_right)
+    {
+        return false;
+    }
+
+    const Ciphertext beta_left = EvaluateBetaCiphertext(
+        public_key,
+        proof_message.base_ciphertext,
+        proof_message.a_responses,
+        proof_message.alpha_responses,
+        proof_message.b_responses,
+        proof_message.q,
+        proof_message.encryption_randomness_response);
+    if (beta_left.u != beta_right.u || beta_left.e != beta_right.e)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+NTL::ZZ CamenischShoupEncZKP::GenerateBatchBetaChallenge(
+    const PublicKey& public_key,
+    const CommitmentKey& commitment_key,
+    const BatchBetaProofMessage& proof_message,
+    std::uint32_t output_index) const
+{
+    std::ostringstream stream;
+    stream << "CamenischShoupBatchBetaSigmaProof|";
+    AppendZZ(stream, public_key.N);
+    AppendZZ(stream, public_key.N_zeta_plus_one);
+    AppendZZ(stream, public_key.T);
+    AppendZZ(stream, public_key.g);
+    AppendVector(stream, public_key.pk);
+    AppendVector(stream, commitment_key.generators);
+    AppendZZ(stream, commitment_key.h);
+    AppendCiphertext(stream, proof_message.base_ciphertext);
+    AppendZZ(stream, proof_message.q);
+    AppendVector(stream, proof_message.a_commitments);
+    AppendVector(stream, proof_message.alpha_commitments);
+    AppendVector(stream, proof_message.b_commitments);
+    AppendCiphertexts(stream, proof_message.beta_ciphertexts);
+    AppendZZ(stream, proof_message.random_a_commitment);
+    AppendZZ(stream, proof_message.random_alpha_commitment);
+    AppendZZ(stream, proof_message.random_b_commitment);
+    AppendCiphertext(stream, proof_message.random_beta_ciphertext);
+    stream << output_index << '|';
+    return HashToZZ(stream.str());
+}
+
+bool CamenischShoupEncZKP::IsValidCiphertext(
+    const PublicKey& public_key,
+    const Ciphertext& ciphertext) const
+{
+    if (ciphertext.u <= 0 ||
+        ciphertext.u >= public_key.N_zeta_plus_one ||
+        GCD(ciphertext.u, public_key.N_zeta_plus_one) != 1 ||
+        ciphertext.e.size() != CamenischShoupEnc::CiphertextEComponentCount)
+    {
+        return false;
+    }
+    for (const NTL::ZZ& component : ciphertext.e)
+    {
+        if (component <= 0 ||
+            component >= public_key.N_zeta_plus_one ||
+            GCD(component, public_key.N_zeta_plus_one) != 1)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool CamenischShoupEncZKP::IsValidCommitment(
+    const PublicKey& public_key,
+    const NTL::ZZ& commitment) const
+{
+    const NTL::ZZ modulus = public_key.N * public_key.N;
+    return commitment > 0 &&
+        commitment < modulus &&
+        GCD(commitment, modulus) == 1;
+}

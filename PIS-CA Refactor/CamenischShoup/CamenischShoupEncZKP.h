@@ -94,6 +94,68 @@ public:
         const std::vector<NTL::ZZ>& commitments,
         const ProofMessage& proof_message) const;
 
+    struct BatchBetaProofMessage
+    {
+        Ciphertext base_ciphertext;
+        NTL::ZZ q;
+        std::vector<NTL::ZZ> a_commitments;
+        std::vector<NTL::ZZ> alpha_commitments;
+        std::vector<NTL::ZZ> b_commitments;
+        std::vector<Ciphertext> beta_ciphertexts;
+        NTL::ZZ random_a_commitment;
+        NTL::ZZ random_alpha_commitment;
+        NTL::ZZ random_b_commitment;
+        Ciphertext random_beta_ciphertext;
+        std::vector<NTL::ZZ> challenges;
+
+        // One aggregated response per packed plaintext slot.
+        std::vector<NTL::ZZ> a_responses;
+        std::vector<NTL::ZZ> alpha_responses;
+        std::vector<NTL::ZZ> b_responses;
+        NTL::ZZ a_commitment_randomness_response;
+        NTL::ZZ alpha_commitment_randomness_response;
+        NTL::ZZ b_commitment_randomness_response;
+        NTL::ZZ encryption_randomness_response;
+    };
+
+    struct BatchBetaProof
+    {
+        std::vector<NTL::ZZ> a;
+        std::vector<NTL::ZZ> alpha;
+        std::vector<NTL::ZZ> b;
+        std::vector<NTL::ZZ> a_commitment_randomness;
+        std::vector<NTL::ZZ> alpha_commitment_randomness;
+        std::vector<NTL::ZZ> b_commitment_randomness;
+        std::vector<NTL::ZZ> encryption_randomness;
+        std::vector<NTL::ZZ> a_masks;
+        std::vector<NTL::ZZ> alpha_masks;
+        std::vector<NTL::ZZ> b_masks;
+        NTL::ZZ a_commitment_randomness_mask;
+        NTL::ZZ alpha_commitment_randomness_mask;
+        NTL::ZZ b_commitment_randomness_mask;
+        NTL::ZZ encryption_randomness_mask;
+        BatchBetaProofMessage message;
+    };
+
+    void CreateBatchBetaCiphertextsAndProof(
+        const PublicKey& public_key,
+        const CommitmentKey& commitment_key,
+        const Ciphertext& base_ciphertext,
+        const NTL::ZZ& q,
+        const std::vector<NTL::ZZ>& a,
+        const std::vector<NTL::ZZ>& alpha,
+        const std::vector<NTL::ZZ>& b,
+        const std::vector<NTL::ZZ>& a_commitment_randomness,
+        const std::vector<NTL::ZZ>& alpha_commitment_randomness,
+        const std::vector<NTL::ZZ>& b_commitment_randomness,
+        const std::vector<NTL::ZZ>& encryption_randomness,
+        BatchBetaProof& proof) const;
+
+    bool VerifyBatchBetaProof(
+        const PublicKey& public_key,
+        const CommitmentKey& commitment_key,
+        const BatchBetaProofMessage& proof_message) const;
+
 private:
     NTL::ZZ GenerateCommitment(
         const PublicKey& public_key,
@@ -123,6 +185,34 @@ private:
         const CommitmentKey& commitment_key,
         const std::vector<Ciphertext>& ciphertexts,
         const std::vector<NTL::ZZ>& commitments) const;
+
+    NTL::ZZ GenerateVectorCommitment(
+        const PublicKey& public_key,
+        const CommitmentKey& commitment_key,
+        const std::vector<NTL::ZZ>& values,
+        const NTL::ZZ& randomness) const;
+
+    NTL::ZZ PackBatchValues(
+        const PublicKey& public_key,
+        const std::vector<NTL::ZZ>& values) const;
+
+    Ciphertext EvaluateBetaCiphertext(
+        const PublicKey& public_key,
+        const Ciphertext& base_ciphertext,
+        const std::vector<NTL::ZZ>& a,
+        const std::vector<NTL::ZZ>& alpha,
+        const std::vector<NTL::ZZ>& b,
+        const NTL::ZZ& q,
+        const NTL::ZZ& encryption_randomness) const;
+
+    NTL::ZZ GenerateBatchBetaChallenge(
+        const PublicKey& public_key,
+        const CommitmentKey& commitment_key,
+        const BatchBetaProofMessage& proof_message,
+        std::uint32_t output_index) const;
+
+    bool IsValidCiphertext(const PublicKey& public_key, const Ciphertext& ciphertext) const;
+    bool IsValidCommitment(const PublicKey& public_key, const NTL::ZZ& commitment) const;
 
     const CamenischShoupEnc& encryption_;
 };

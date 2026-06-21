@@ -106,6 +106,90 @@ int main()
         !zkp.VerifyEncProof(public_key, commitment_key, tampered_message),
         "VerifyEncProof rejects tampered plaintext response") && all_passed;
 
+    const NTL::ZZ beta_q(101);
+    const std::vector<NTL::ZZ> beta_a = {
+        NTL::ZZ(2), NTL::ZZ(3), NTL::ZZ(5), NTL::ZZ(7),
+        NTL::ZZ(11), NTL::ZZ(13), NTL::ZZ(17), NTL::ZZ(19)};
+    const std::vector<NTL::ZZ> beta_alpha = {
+        NTL::ZZ(11), NTL::ZZ(13), NTL::ZZ(17), NTL::ZZ(19),
+        NTL::ZZ(23), NTL::ZZ(29), NTL::ZZ(31), NTL::ZZ(37)};
+    const std::vector<NTL::ZZ> beta_b = {
+        NTL::ZZ(41), NTL::ZZ(43), NTL::ZZ(47), NTL::ZZ(53),
+        NTL::ZZ(59), NTL::ZZ(61), NTL::ZZ(67), NTL::ZZ(71)};
+    const std::vector<NTL::ZZ> a_commitment_randomness = {
+        NTL::ZZ(73), NTL::ZZ(79)};
+    const std::vector<NTL::ZZ> alpha_commitment_randomness = {
+        NTL::ZZ(83), NTL::ZZ(89)};
+    const std::vector<NTL::ZZ> b_commitment_randomness = {
+        NTL::ZZ(97), NTL::ZZ(103)};
+    const std::vector<NTL::ZZ> beta_encryption_randomness = {
+        NTL::ZZ(41), NTL::ZZ(43)};
+    CamenischShoupEnc::Ciphertext k2_ciphertext;
+    NTL::ZZ k2_encryption_randomness;
+    enc.Encrypt(
+        public_key,
+        std::vector<NTL::ZZ>{NTL::ZZ(107)},
+        k2_encryption_randomness,
+        k2_ciphertext);
+
+    CamenischShoupEncZKP::BatchBetaProof beta_proof;
+    zkp.CreateBatchBetaCiphertextsAndProof(
+        public_key,
+        commitment_key,
+        k2_ciphertext,
+        beta_q,
+        beta_a,
+        beta_alpha,
+        beta_b,
+        a_commitment_randomness,
+        alpha_commitment_randomness,
+        b_commitment_randomness,
+        beta_encryption_randomness,
+        beta_proof);
+
+    all_passed = ExpectTrue(
+        beta_proof.message.beta_ciphertexts.size() == 2,
+        "BatchBeta constructs the beta ciphertext set") && all_passed;
+    all_passed = ExpectTrue(
+        zkp.VerifyBatchBetaProof(
+            public_key,
+            commitment_key,
+            beta_proof.message),
+        "BatchBeta Sigma proof verifies without decrypting base ciphertexts") && all_passed;
+
+    CamenischShoupEncZKP::BatchBetaProofMessage tampered_beta_message = beta_proof.message;
+    tampered_beta_message.beta_ciphertexts[0].u = MulMod(
+        tampered_beta_message.beta_ciphertexts[0].u,
+        public_key.g,
+        public_key.N_zeta_plus_one);
+    all_passed = ExpectTrue(
+        !zkp.VerifyBatchBetaProof(
+            public_key,
+            commitment_key,
+            tampered_beta_message),
+        "BatchBeta rejects a tampered beta ciphertext") && all_passed;
+
+    tampered_beta_message = beta_proof.message;
+    tampered_beta_message.alpha_commitments[1] = MulMod(
+        tampered_beta_message.alpha_commitments[1],
+        commitment_key.h,
+        public_key.N * public_key.N);
+    all_passed = ExpectTrue(
+        !zkp.VerifyBatchBetaProof(
+            public_key,
+            commitment_key,
+            tampered_beta_message),
+        "BatchBeta rejects a tampered alpha commitment") && all_passed;
+
+    tampered_beta_message = beta_proof.message;
+    tampered_beta_message.a_responses[0] += 1;
+    all_passed = ExpectTrue(
+        !zkp.VerifyBatchBetaProof(
+            public_key,
+            commitment_key,
+            tampered_beta_message),
+        "BatchBeta rejects a coefficient response not bound to the commitments") && all_passed;
+
     if (!all_passed)
     {
         std::cerr << "Camenisch-Shoup encryption ZKP full flow test failed" << std::endl;
