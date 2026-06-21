@@ -47,6 +47,33 @@ public:
         ~SecretKey();
     };
 
+    struct CommitmentKey
+    {
+        const EC_GROUP* group = nullptr;
+        EC_POINT* g = nullptr;
+        EC_POINT* h = nullptr;
+
+        CommitmentKey() = default;
+        CommitmentKey(const CommitmentKey& other);
+        CommitmentKey& operator=(const CommitmentKey& other);
+        CommitmentKey(CommitmentKey&& other) noexcept;
+        CommitmentKey& operator=(CommitmentKey&& other) noexcept;
+        ~CommitmentKey();
+    };
+
+    struct Commitment
+    {
+        const EC_GROUP* group = nullptr;
+        EC_POINT* value = nullptr;
+
+        Commitment() = default;
+        Commitment(const Commitment& other);
+        Commitment& operator=(const Commitment& other);
+        Commitment(Commitment&& other) noexcept;
+        Commitment& operator=(Commitment&& other) noexcept;
+        ~Commitment();
+    };
+
     struct Ciphertext
     {
         const EC_GROUP* group = nullptr;
@@ -72,7 +99,24 @@ public:
 
     void Setup(PublicKey& public_key) const;
     void GenerateKeys(PublicKey& public_key, SecretKey& secret_key) const;
+    void GenerateKeys(
+        PublicKey& public_key,
+        SecretKey& secret_key,
+        CommitmentKey& commitment_key) const;
     void GenerateRandomScalar(BIGNUM* scalar) const;
+    void GenerateRandomGroupElement(EC_POINT* point) const;
+
+    // Com(m; rho) = m * commitment_key.g + rho * commitment_key.h.
+    void GenerateCommitment(
+        const CommitmentKey& commitment_key,
+        const BIGNUM* plaintext,
+        BIGNUM* randomness,
+        Commitment& commitment) const;
+    void GenerateCommitmentWithRandomness(
+        const CommitmentKey& commitment_key,
+        const BIGNUM* plaintext,
+        const BIGNUM* randomness,
+        Commitment& commitment) const;
 
     // Enc(pk, M; r) = (r * g, M + r * pk).
     void Encrypt(
@@ -114,6 +158,8 @@ public:
         const BIGNUM* scalar) const;
 
     bool IsValidPublicKey(const PublicKey& public_key) const;
+    bool IsValidCommitmentKey(const CommitmentKey& commitment_key) const;
+    bool IsValidCommitment(const Commitment& commitment) const;
     bool IsValidCiphertext(const Ciphertext& ciphertext) const;
     bool PointsEqual(const EC_POINT* left, const EC_POINT* right) const;
 
@@ -122,6 +168,7 @@ public:
     EC_POINT* NewPoint() const;
 
 private:
+    void PrepareCommitment(Commitment& commitment) const;
     void PrepareCiphertext(Ciphertext& ciphertext) const;
     void NormalizeScalar(const BIGNUM* scalar, BIGNUM* normalized) const;
 

@@ -19,7 +19,8 @@
       "dependsOn": [
         "build camenisch shoup enc test",
         "build camenisch shoup enc zkp test",
-        "build elgamal enc test"
+        "build elgamal enc test",
+        "build elgamal enc zkp test"
       ],
       "dependsOrder": "sequence",
       "group": {
@@ -148,6 +149,35 @@
       "problemMatcher": ["$gcc"]
     },
     {
+      "label": "build elgamal enc zkp test",
+      "type": "process",
+      "command": "Z:/MSY2/ucrt64/bin/g++.exe",
+      "args": [
+        "${workspaceFolder}/PIS-CA Refactor/tests/elgamal_enc_zkp_test.cpp",
+        "${workspaceFolder}/PIS-CA Refactor/ElGamal/ElGamalEnc.cpp",
+        "${workspaceFolder}/PIS-CA Refactor/ElGamal/ElGamalEncZKP.cpp",
+        "-std=c++17",
+        "-O0",
+        "-Wall",
+        "-Wextra",
+        "-I",
+        "Z:/MSY2/ucrt64/include",
+        "-L",
+        "Z:/MSY2/ucrt64/lib",
+        "-o",
+        "${workspaceFolder}/build/elgamal_enc_zkp_test.exe",
+        "-lcrypto"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PATH": "Z:/MSY2/ucrt64/bin;${env:PATH}"
+        }
+      },
+      "dependsOn": "make build dir",
+      "problemMatcher": ["$gcc"]
+    },
+    {
       "label": "build camenisch shoup enc zkp test",
       "type": "shell",
       "command": "Z:/MSY2/ucrt64/bin/g++.exe",
@@ -249,9 +279,23 @@
       "dependsOn": [
         "run camenisch shoup enc test",
         "run camenisch shoup enc zkp test",
-        "run elgamal enc test"
+        "run elgamal enc test",
+        "run elgamal enc zkp test"
       ],
       "dependsOrder": "sequence",
+      "problemMatcher": []
+    },
+    {
+      "label": "run elgamal enc zkp test",
+      "type": "shell",
+      "command": "build/elgamal_enc_zkp_test.exe",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PATH": "Z:/MSY2/ucrt64/bin;${env:PATH}"
+        }
+      },
+      "dependsOn": "build elgamal enc zkp test",
       "problemMatcher": []
     }
   ]

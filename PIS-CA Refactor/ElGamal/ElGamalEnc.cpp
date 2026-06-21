@@ -3,6 +3,7 @@
 #include <stdexcept>
 #include <utility>
 
+#include <openssl/rand.h>
 #include <openssl/sha.h>
 
 namespace
@@ -127,6 +128,108 @@ ElGamalEnc::SecretKey::~SecretKey()
     BN_clear_free(sk);
 }
 
+ElGamalEnc::CommitmentKey::CommitmentKey(const CommitmentKey& other)
+    : group(other.group),
+      g(DuplicatePoint(other.group, other.g)),
+      h(DuplicatePoint(other.group, other.h))
+{
+}
+
+ElGamalEnc::CommitmentKey& ElGamalEnc::CommitmentKey::operator=(
+    const CommitmentKey& other)
+{
+    if (this == &other)
+    {
+        return *this;
+    }
+    EC_POINT* new_g = DuplicatePoint(other.group, other.g);
+    EC_POINT* new_h = DuplicatePoint(other.group, other.h);
+    EC_POINT_free(g);
+    EC_POINT_free(h);
+    group = other.group;
+    g = new_g;
+    h = new_h;
+    return *this;
+}
+
+ElGamalEnc::CommitmentKey::CommitmentKey(CommitmentKey&& other) noexcept
+    : group(other.group), g(other.g), h(other.h)
+{
+    other.group = nullptr;
+    other.g = nullptr;
+    other.h = nullptr;
+}
+
+ElGamalEnc::CommitmentKey& ElGamalEnc::CommitmentKey::operator=(
+    CommitmentKey&& other) noexcept
+{
+    if (this == &other)
+    {
+        return *this;
+    }
+    EC_POINT_free(g);
+    EC_POINT_free(h);
+    group = other.group;
+    g = other.g;
+    h = other.h;
+    other.group = nullptr;
+    other.g = nullptr;
+    other.h = nullptr;
+    return *this;
+}
+
+ElGamalEnc::CommitmentKey::~CommitmentKey()
+{
+    EC_POINT_free(g);
+    EC_POINT_free(h);
+}
+
+ElGamalEnc::Commitment::Commitment(const Commitment& other)
+    : group(other.group), value(DuplicatePoint(other.group, other.value))
+{
+}
+
+ElGamalEnc::Commitment& ElGamalEnc::Commitment::operator=(
+    const Commitment& other)
+{
+    if (this == &other)
+    {
+        return *this;
+    }
+    EC_POINT* new_value = DuplicatePoint(other.group, other.value);
+    EC_POINT_free(value);
+    group = other.group;
+    value = new_value;
+    return *this;
+}
+
+ElGamalEnc::Commitment::Commitment(Commitment&& other) noexcept
+    : group(other.group), value(other.value)
+{
+    other.group = nullptr;
+    other.value = nullptr;
+}
+
+ElGamalEnc::Commitment& ElGamalEnc::Commitment::operator=(
+    Commitment&& other) noexcept
+{
+    if (this == &other)
+    {
+        return *this;
+    }
+    EC_POINT_free(value);
+    group = other.group;
+    value = other.value;
+    other.group = nullptr;
+    other.value = nullptr;
+    return *this;
+}
+
+ElGamalEnc::Commitment::~Commitment()
+{
+    EC_POINT_free(value);
+}
+
 ElGamalEnc::Ciphertext::Ciphertext(const Ciphertext& other)
     : group(other.group),
       u(DuplicatePoint(other.group, other.u)),
@@ -243,6 +346,40 @@ void ElGamalEnc::GenerateKeys(PublicKey& public_key, SecretKey& secret_key) cons
         "ElGamal key generation failed");
 }
 
+void ElGamalEnc::GenerateKeys(
+    PublicKey& public_key,
+    SecretKey& secret_key,
+    CommitmentKey& commitment_key) const
+{
+    GenerateKeys(public_key, secret_key);
+
+    commitment_key.group = group_;
+    EC_POINT_free(commitment_key.g);
+    EC_POINT_free(commitment_key.h);
+    commitment_key.g = EC_POINT_new(group_);
+    commitment_key.h = EC_POINT_new(group_);
+    ThrowIf(
+        commitment_key.g == nullptr ||
+            commitment_key.h == nullptr,
+        "ElGamal commitment-key allocation failed");
+
+    GenerateRandomGroupElement(commitment_key.g);
+    int generators_equal = 0;
+    do
+    {
+        GenerateRandomGroupElement(commitment_key.h);
+        generators_equal = EC_POINT_cmp(
+            group_,
+            commitment_key.g,
+            commitment_key.h,
+            bn_ctx_);
+        ThrowIf(
+            generators_equal < 0,
+            "ElGamal commitment generator comparison failed");
+    }
+    while (generators_equal == 0);
+}
+
 void ElGamalEnc::GenerateRandomScalar(BIGNUM* scalar) const
 {
     ThrowIf(scalar == nullptr, "ElGamal scalar is null");
@@ -252,6 +389,167 @@ void ElGamalEnc::GenerateRandomScalar(BIGNUM* scalar) const
             "ElGamal random-scalar generation failed");
     }
     while (BN_is_zero(scalar));
+}
+
+void ElGamalEnc::GenerateRandomGroupElement(EC_POINT* point) const
+{
+    ThrowIf(point == nullptr, "ElGamal group element is null");
+
+    BN_CTX_start(bn_ctx_);
+    BIGNUM* field_modulus = BN_CTX_get(bn_ctx_);
+    BIGNUM* curve_a = BN_CTX_get(bn_ctx_);
+    BIGNUM* curve_b = BN_CTX_get(bn_ctx_);
+    BIGNUM* x = BN_CTX_get(bn_ctx_);
+    BIGNUM* cofactor = BN_CTX_get(bn_ctx_);
+    ThrowIf(
+        field_modulus == nullptr ||
+            curve_a == nullptr ||
+            curve_b == nullptr ||
+            x == nullptr ||
+            cofactor == nullptr,
+        "ElGamal random group-element allocation failed");
+    ThrowIf(
+        EC_GROUP_get_curve(
+            group_,
+            field_modulus,
+            curve_a,
+            curve_b,
+            bn_ctx_) != 1 ||
+            EC_GROUP_get_cofactor(group_, cofactor, bn_ctx_) != 1,
+        "ElGamal curve parameter lookup failed");
+
+    EC_POINT* candidate = EC_POINT_new(group_);
+    EC_POINT* subgroup_check = EC_POINT_new(group_);
+    ThrowIf(
+        candidate == nullptr || subgroup_check == nullptr,
+        "ElGamal random group-element point allocation failed");
+
+    for (;;)
+    {
+        unsigned char y_bit = 0;
+        ThrowIf(
+            BN_priv_rand_range(x, field_modulus) != 1 ||
+                RAND_priv_bytes(&y_bit, 1) != 1,
+            "ElGamal random group-element coordinate generation failed");
+
+        if (EC_POINT_set_compressed_coordinates(
+                group_,
+                candidate,
+                x,
+                y_bit & 1,
+                bn_ctx_) != 1)
+        {
+            continue;
+        }
+
+        if (!BN_is_one(cofactor))
+        {
+            ThrowIf(
+                EC_POINT_mul(
+                    group_,
+                    candidate,
+                    nullptr,
+                    candidate,
+                    cofactor,
+                    bn_ctx_) != 1,
+                "ElGamal random group-element cofactor clearing failed");
+        }
+
+        if (EC_POINT_is_at_infinity(group_, candidate) == 1)
+        {
+            continue;
+        }
+
+        ThrowIf(
+            EC_POINT_mul(
+                group_,
+                subgroup_check,
+                nullptr,
+                candidate,
+                order_,
+                bn_ctx_) != 1,
+            "ElGamal random group-element subgroup check failed");
+        if (EC_POINT_is_at_infinity(group_, subgroup_check) != 1)
+        {
+            continue;
+        }
+
+        ThrowIf(
+            EC_POINT_copy(point, candidate) != 1,
+            "ElGamal random group-element copy failed");
+        break;
+    }
+
+    EC_POINT_free(candidate);
+    EC_POINT_free(subgroup_check);
+    BN_CTX_end(bn_ctx_);
+}
+
+void ElGamalEnc::GenerateCommitment(
+    const CommitmentKey& commitment_key,
+    const BIGNUM* plaintext,
+    BIGNUM* randomness,
+    Commitment& commitment) const
+{
+    GenerateRandomScalar(randomness);
+    GenerateCommitmentWithRandomness(
+        commitment_key,
+        plaintext,
+        randomness,
+        commitment);
+}
+
+void ElGamalEnc::GenerateCommitmentWithRandomness(
+    const CommitmentKey& commitment_key,
+    const BIGNUM* plaintext,
+    const BIGNUM* randomness,
+    Commitment& commitment) const
+{
+    ThrowIf(
+        !IsValidCommitmentKey(commitment_key),
+        "ElGamal commitment key is invalid");
+    ThrowIf(
+        plaintext == nullptr || randomness == nullptr,
+        "ElGamal commitment input is null");
+
+    PrepareCommitment(commitment);
+    BN_CTX_start(bn_ctx_);
+    BIGNUM* normalized_plaintext = BN_CTX_get(bn_ctx_);
+    BIGNUM* normalized_randomness = BN_CTX_get(bn_ctx_);
+    EC_POINT* randomness_term = EC_POINT_new(group_);
+    ThrowIf(
+        normalized_plaintext == nullptr ||
+            normalized_randomness == nullptr ||
+            randomness_term == nullptr,
+        "ElGamal commitment temporary allocation failed");
+
+    NormalizeScalar(plaintext, normalized_plaintext);
+    NormalizeScalar(randomness, normalized_randomness);
+    ThrowIf(
+        EC_POINT_mul(
+            group_,
+            commitment.value,
+            nullptr,
+            commitment_key.g,
+            normalized_plaintext,
+            bn_ctx_) != 1 ||
+            EC_POINT_mul(
+                group_,
+                randomness_term,
+                nullptr,
+                commitment_key.h,
+                normalized_randomness,
+                bn_ctx_) != 1 ||
+            EC_POINT_add(
+                group_,
+                commitment.value,
+                commitment.value,
+                randomness_term,
+                bn_ctx_) != 1,
+        "ElGamal commitment generation failed");
+
+    EC_POINT_free(randomness_term);
+    BN_CTX_end(bn_ctx_);
 }
 
 void ElGamalEnc::Encrypt(
@@ -448,6 +746,26 @@ bool ElGamalEnc::IsValidPublicKey(const PublicKey& public_key) const
         EC_POINT_is_at_infinity(group_, public_key.pk) == 0;
 }
 
+bool ElGamalEnc::IsValidCommitmentKey(
+    const CommitmentKey& commitment_key) const
+{
+    return commitment_key.group == group_ &&
+        commitment_key.g != nullptr &&
+        commitment_key.h != nullptr &&
+        EC_POINT_is_on_curve(group_, commitment_key.g, bn_ctx_) == 1 &&
+        EC_POINT_is_on_curve(group_, commitment_key.h, bn_ctx_) == 1 &&
+        EC_POINT_is_at_infinity(group_, commitment_key.g) == 0 &&
+        EC_POINT_is_at_infinity(group_, commitment_key.h) == 0;
+}
+
+bool ElGamalEnc::IsValidCommitment(const Commitment& commitment) const
+{
+    return commitment.group == group_ &&
+        commitment.value != nullptr &&
+        EC_POINT_is_on_curve(group_, commitment.value, bn_ctx_) == 1 &&
+        EC_POINT_is_at_infinity(group_, commitment.value) == 0;
+}
+
 bool ElGamalEnc::IsValidCiphertext(const Ciphertext& ciphertext) const
 {
     return ciphertext.group == group_ &&
@@ -479,6 +797,23 @@ EC_POINT* ElGamalEnc::NewPoint() const
     EC_POINT* point = EC_POINT_new(group_);
     ThrowIf(point == nullptr, "ElGamal point allocation failed");
     return point;
+}
+
+void ElGamalEnc::PrepareCommitment(Commitment& commitment) const
+{
+    if (commitment.group != group_)
+    {
+        EC_POINT_free(commitment.value);
+        commitment.value = nullptr;
+        commitment.group = group_;
+    }
+    if (commitment.value == nullptr)
+    {
+        commitment.value = EC_POINT_new(group_);
+    }
+    ThrowIf(
+        commitment.value == nullptr,
+        "ElGamal commitment allocation failed");
 }
 
 void ElGamalEnc::PrepareCiphertext(Ciphertext& ciphertext) const
