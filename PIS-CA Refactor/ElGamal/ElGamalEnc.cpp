@@ -25,6 +25,7 @@ void ThrowIf(bool failed, const char* message)
 ElGamalEnc::PublicKey::PublicKey(const PublicKey& other)
     : group(other.group),
       generator(DuplicatePoint(other.group, other.generator)),
+      g(DuplicatePoint(other.group, other.g)),
       pk(DuplicatePoint(other.group, other.pk))
 {
 }
@@ -37,20 +38,24 @@ ElGamalEnc::PublicKey& ElGamalEnc::PublicKey::operator=(const PublicKey& other)
     }
 
     EC_POINT* new_generator = DuplicatePoint(other.group, other.generator);
+    EC_POINT* new_g = DuplicatePoint(other.group, other.g);
     EC_POINT* new_pk = DuplicatePoint(other.group, other.pk);
     EC_POINT_free(generator);
+    EC_POINT_free(g);
     EC_POINT_free(pk);
     group = other.group;
     generator = new_generator;
+    g = new_g;
     pk = new_pk;
     return *this;
 }
 
 ElGamalEnc::PublicKey::PublicKey(PublicKey&& other) noexcept
-    : group(other.group), generator(other.generator), pk(other.pk)
+    : group(other.group), generator(other.generator), g(other.g), pk(other.pk)
 {
     other.group = nullptr;
     other.generator = nullptr;
+    other.g = nullptr;
     other.pk = nullptr;
 }
 
@@ -62,12 +67,15 @@ ElGamalEnc::PublicKey& ElGamalEnc::PublicKey::operator=(PublicKey&& other) noexc
     }
 
     EC_POINT_free(generator);
+    EC_POINT_free(g);
     EC_POINT_free(pk);
     group = other.group;
     generator = other.generator;
+    g = other.g;
     pk = other.pk;
     other.group = nullptr;
     other.generator = nullptr;
+    other.g = nullptr;
     other.pk = nullptr;
     return *this;
 }
@@ -75,6 +83,7 @@ ElGamalEnc::PublicKey& ElGamalEnc::PublicKey::operator=(PublicKey&& other) noexc
 ElGamalEnc::PublicKey::~PublicKey()
 {
     EC_POINT_free(generator);
+    EC_POINT_free(g);
     EC_POINT_free(pk);
 }
 
@@ -318,18 +327,27 @@ void ElGamalEnc::Setup(PublicKey& public_key) const
 {
     public_key.group = group_;
     EC_POINT_free(public_key.generator);
+    EC_POINT_free(public_key.g);
     EC_POINT_free(public_key.pk);
     public_key.generator = EC_POINT_dup(EC_GROUP_get0_generator(group_), group_);
+    public_key.g = EC_POINT_new(group_);
     public_key.pk = EC_POINT_new(group_);
-    ThrowIf(public_key.generator == nullptr || public_key.pk == nullptr,
+    ThrowIf(
+        public_key.generator == nullptr ||
+            public_key.g == nullptr ||
+            public_key.pk == nullptr,
         "ElGamal public-key allocation failed");
+    GenerateRandomGroupElement(public_key.g);
     ThrowIf(EC_POINT_set_to_infinity(group_, public_key.pk) != 1,
         "ElGamal public-key initialization failed");
 }
 
 void ElGamalEnc::GenerateKeys(PublicKey& public_key, SecretKey& secret_key) const
 {
-    if (public_key.group != group_ || public_key.generator == nullptr || public_key.pk == nullptr)
+    if (public_key.group != group_ ||
+        public_key.generator == nullptr ||
+        public_key.g == nullptr ||
+        public_key.pk == nullptr)
     {
         Setup(public_key);
     }
@@ -739,10 +757,13 @@ bool ElGamalEnc::IsValidPublicKey(const PublicKey& public_key) const
 {
     return public_key.group == group_ &&
         public_key.generator != nullptr &&
+        public_key.g != nullptr &&
         public_key.pk != nullptr &&
         EC_POINT_is_on_curve(group_, public_key.generator, bn_ctx_) == 1 &&
+        EC_POINT_is_on_curve(group_, public_key.g, bn_ctx_) == 1 &&
         EC_POINT_is_on_curve(group_, public_key.pk, bn_ctx_) == 1 &&
         EC_POINT_is_at_infinity(group_, public_key.generator) == 0 &&
+        EC_POINT_is_at_infinity(group_, public_key.g) == 0 &&
         EC_POINT_is_at_infinity(group_, public_key.pk) == 0;
 }
 

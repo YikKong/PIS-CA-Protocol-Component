@@ -25,6 +25,7 @@ public:
     {
         const EC_GROUP* group = nullptr;
         EC_POINT* generator = nullptr;
+        EC_POINT* g = nullptr;
         EC_POINT* pk = nullptr;
 
         PublicKey() = default;

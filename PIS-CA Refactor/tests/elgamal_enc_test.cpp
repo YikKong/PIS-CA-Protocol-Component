@@ -92,6 +92,7 @@ int main()
     all_passed = ExpectTrue(
         setup_key.group == enc.Group() &&
             setup_key.generator != nullptr &&
+            setup_key.g != nullptr &&
             setup_key.pk != nullptr &&
             EC_POINT_is_at_infinity(enc.Group(), setup_key.pk) == 1 &&
             !enc.IsValidPublicKey(setup_key),
@@ -366,6 +367,7 @@ int main()
             enc.IsValidCommitmentKey(commitment_key_copy) &&
             enc.PointsEqual(commitment_copy.value, commitment.value) &&
             CiphertextsEqual(enc, ciphertext_copy, first_ciphertext) &&
+            public_key_copy.g != public_key.g &&
             public_key_copy.pk != public_key.pk &&
             secret_key_copy.sk != secret_key.sk &&
             commitment_key_copy.g != commitment_key.g &&
@@ -406,6 +408,7 @@ int main()
             enc.IsValidCommitment(moved_commitment) &&
             enc.IsValidCiphertext(moved_ciphertext) &&
             public_key_copy.generator == nullptr &&
+            public_key_copy.g == nullptr &&
             public_key_copy.pk == nullptr &&
             secret_key_copy.sk == nullptr &&
             commitment_key_copy.g == nullptr &&
