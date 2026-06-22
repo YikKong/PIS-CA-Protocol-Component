@@ -98,8 +98,8 @@ void CamenischShoupEnc::GenerateKeys(PublicKey& public_key, SecretKey& secret_ke
         public_key.pk.emplace_back(PowerMod(public_key.g, secret_exponent, public_key.N_zeta_plus_one));
     }
 
-    commitment_key.generators.clear();
-    commitment_key.generators.reserve(CommitmentGeneratorCount);
+    commitment_key.g.clear();
+    commitment_key.g.reserve(CommitmentGeneratorCount);
     for (std::uint32_t i = 0; i < CommitmentGeneratorCount; ++i)
     {
         NTL::ZZ commitment_generator;
@@ -111,7 +111,7 @@ void CamenischShoupEnc::GenerateKeys(PublicKey& public_key, SecretKey& secret_ke
                 break;
             }
         }
-        commitment_key.generators.emplace_back(commitment_generator);
+        commitment_key.g.emplace_back(commitment_generator);
     }
 
     while (true) 
@@ -159,12 +159,14 @@ void CamenischShoupEnc::InitializeInputs(const PublicKey& public_key, const Comm
         RandomBits(randomness, NumBits(public_key.N) - 10);
 
         input_commitment_randomness.emplace_back(randomness);
-        input_commitments.emplace_back(GenerateCommitment(
+        Commitment commitment;
+        GenerateCommitmentWithRandomness(
             public_key,
             commitment_key,
-            input_plaintexts,
+            PlaintextSlice(input_plaintexts, plaintext_index),
             randomness,
-            plaintext_index));
+            commitment);
+        input_commitments.emplace_back(commitment);
     }
 }
 
@@ -217,32 +219,52 @@ std::vector<NTL::ZZ> CamenischShoupEnc::PlaintextSlice(const std::vector<NTL::ZZ
     return slice;
 }
 
-NTL::ZZ CamenischShoupEnc::GenerateCommitment(
+void CamenischShoupEnc::GenerateCommitment(
     const PublicKey& public_key,
     const CommitmentKey& commitment_key,
-    const std::vector<NTL::ZZ>& plaintexts,
-    const NTL::ZZ& commitment_randomness,
-    std::uint32_t plaintext_index) const
+    const std::vector<NTL::ZZ>& plaintext,
+    NTL::ZZ& randomness,
+    Commitment& commitment) const
 {
+    RandomBits(randomness, NumBits(public_key.N) - 10);
+    GenerateCommitmentWithRandomness(
+        public_key,
+        commitment_key,
+        plaintext,
+        randomness,
+        commitment);
+}
+
+void CamenischShoupEnc::GenerateCommitmentWithRandomness(
+    const PublicKey& public_key,
+    const CommitmentKey& commitment_key,
+    const std::vector<NTL::ZZ>& plaintext,
+    const NTL::ZZ& randomness,
+    Commitment& commitment) const
+{
+    if (plaintext.size() > PlaintextValuesPerCiphertext ||
+        commitment_key.g.size() < CommitmentGeneratorCount)
+    {
+        std::cout << "commitment input size error " << std::endl;
+        return;
+    }
+
     const NTL::ZZ commitment_modulus = public_key.N * public_key.N;
-    NTL::ZZ commitment = PowerMod(commitment_key.h, commitment_randomness, commitment_modulus);
-    const std::uint32_t first_slot = plaintext_index * PlaintextValuesPerCiphertext;
+    commitment.value = PowerMod(commitment_key.h, randomness, commitment_modulus);
 
     for (std::uint32_t component_index = 0; component_index < CiphertextEComponentCount; ++component_index)
     {
-        const std::uint32_t component_first_slot = first_slot + component_index * PlaintextSlots;
+        const std::uint32_t component_first_slot = component_index * PlaintextSlots;
         const std::uint32_t generator_first_slot = component_index * PlaintextSlots;
-        for (std::uint32_t slot_index = 0; slot_index < PlaintextSlots && component_first_slot + slot_index < plaintexts.size(); ++slot_index)
+        for (std::uint32_t slot_index = 0; slot_index < PlaintextSlots && component_first_slot + slot_index < plaintext.size(); ++slot_index)
         {
             const NTL::ZZ commitment_factor = PowerMod(
-                commitment_key.generators[generator_first_slot + slot_index],
-                plaintexts[component_first_slot + slot_index],
+                commitment_key.g[generator_first_slot + slot_index],
+                plaintext[component_first_slot + slot_index],
                 commitment_modulus);
-            commitment = MulMod(commitment, commitment_factor, commitment_modulus);
+            commitment.value = MulMod(commitment.value, commitment_factor, commitment_modulus);
         }
     }
-
-    return commitment;
 }
 
 void CamenischShoupEnc::LFunction(const PublicKey& public_key, const NTL::ZZ& encoded_value, NTL::ZZ& quotient) const

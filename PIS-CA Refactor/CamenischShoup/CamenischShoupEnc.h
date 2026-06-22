@@ -47,8 +47,23 @@ public:
 
     struct CommitmentKey
     {
-        std::vector<NTL::ZZ> generators;
+        std::vector<NTL::ZZ> g;
         NTL::ZZ h;
+    };
+
+    struct Commitment
+    {
+        NTL::ZZ value;
+
+        bool operator==(const Commitment& other) const
+        {
+            return value == other.value;
+        }
+
+        bool operator!=(const Commitment& other) const
+        {
+            return !(*this == other);
+        }
     };
 
     struct Ciphertext
@@ -61,12 +76,24 @@ public:
     std::vector<NTL::ZZ> input_encryption_randomness;
     std::vector<Ciphertext> input_ciphertexts;
     std::vector<NTL::ZZ> input_commitment_randomness;
-    std::vector<NTL::ZZ> input_commitments;
+    std::vector<Commitment> input_commitments;
 
     void RandomOracle(std::array<std::uint8_t, HashBytes>& challenge, const std::string& input) const;
     void Setup(PublicKey& public_key) const;
     void GenerateKeys(PublicKey& public_key, SecretKey& secret_key, CommitmentKey& commitment_key) const;
     void InitializeInputs(const PublicKey& public_key, const CommitmentKey& commitment_key);
+    void GenerateCommitment(
+        const PublicKey& public_key,
+        const CommitmentKey& commitment_key,
+        const std::vector<NTL::ZZ>& plaintext,
+        NTL::ZZ& randomness,
+        Commitment& commitment) const;
+    void GenerateCommitmentWithRandomness(
+        const PublicKey& public_key,
+        const CommitmentKey& commitment_key,
+        const std::vector<NTL::ZZ>& plaintext,
+        const NTL::ZZ& randomness,
+        Commitment& commitment) const;
     void Encrypt(const PublicKey& public_key, const std::vector<NTL::ZZ>& plaintext, NTL::ZZ& randomness, Ciphertext& ciphertext) const;
     void EncryptWithRandomness(const PublicKey& public_key, const std::vector<NTL::ZZ>& plaintext, const NTL::ZZ& randomness, Ciphertext& ciphertext) const;
     void LFunction(const PublicKey& public_key, const NTL::ZZ& encoded_value, NTL::ZZ& quotient) const;
@@ -80,12 +107,6 @@ private:
     NTL::ZZ PackPlaintextSlots(const PublicKey& public_key, const std::vector<NTL::ZZ>& plaintext, std::uint32_t component_index) const;
     void UnpackPlaintextSlots(const PublicKey& public_key, NTL::ZZ packed_plaintext, std::vector<NTL::ZZ>& plaintext) const;
     std::vector<NTL::ZZ> PlaintextSlice(const std::vector<NTL::ZZ>& plaintexts, std::uint32_t plaintext_index) const;
-    NTL::ZZ GenerateCommitment(
-        const PublicKey& public_key,
-        const CommitmentKey& commitment_key,
-        const std::vector<NTL::ZZ>& plaintexts,
-        const NTL::ZZ& commitment_randomness,
-        std::uint32_t plaintext_index) const;
 };
 
 #endif // CAMENISCH_SHOUP_ENC_H

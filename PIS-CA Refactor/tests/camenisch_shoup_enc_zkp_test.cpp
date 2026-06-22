@@ -34,6 +34,14 @@ bool ExpectEqual(const std::vector<NTL::ZZ>& actual, const std::vector<NTL::ZZ>&
     std::cerr << "[FAIL] " << case_name << std::endl;
     return false;
 }
+
+bool ExpectEqual(
+    const std::vector<CamenischShoupEnc::Commitment>& actual,
+    const std::vector<CamenischShoupEnc::Commitment>& expected,
+    const std::string& case_name)
+{
+    return ExpectTrue(actual == expected, case_name);
+}
 }
 
 int main()
@@ -54,7 +62,7 @@ int main()
     enc.GenerateKeys(public_key, secret_key, commitment_key);
     enc.InitializeInputs(public_key, commitment_key);
 
-    std::vector<NTL::ZZ> zkp_commitments;
+    std::vector<CamenischShoupEnc::Commitment> zkp_commitments;
     zkp.GenerateCommitments(
         public_key,
         commitment_key,
@@ -87,7 +95,7 @@ int main()
     all_passed = ExpectTrue(proof.message.ciphertexts.size() == enc.input_ciphertexts.size(), "ProofMessage carries ciphertext set") && all_passed;
     all_passed = ExpectEqual(proof.message.commitments, enc.input_commitments, "ProofMessage carries commitment set") && all_passed;
     all_passed = ExpectTrue(proof.message.random_ciphertext.e.size() == CamenischShoupEnc::CiphertextEComponentCount, "ProofMessage carries random ciphertext") && all_passed;
-    all_passed = ExpectTrue(proof.message.random_commitment > 0, "ProofMessage carries random commitment") && all_passed;
+    all_passed = ExpectTrue(proof.message.random_commitment.value > 0, "ProofMessage carries random commitment") && all_passed;
     all_passed = ExpectTrue(proof.message.challenges.size() == enc.input_ciphertexts.size(), "ProofMessage carries batch challenges") && all_passed;
     all_passed = ExpectTrue(proof.message.plaintext_randomness_responses.size() == CamenischShoupEnc::PlaintextValuesPerCiphertext, "ProofMessage carries plaintext response vector") && all_passed;
     all_passed = ExpectTrue(proof.message.commitment_randomness_response > 0, "ProofMessage carries commitment randomness response") && all_passed;
@@ -170,8 +178,8 @@ int main()
         "BatchBeta rejects a tampered beta ciphertext") && all_passed;
 
     tampered_beta_message = beta_proof.message;
-    tampered_beta_message.alpha_commitments[1] = MulMod(
-        tampered_beta_message.alpha_commitments[1],
+    tampered_beta_message.alpha_commitments[1].value = MulMod(
+        tampered_beta_message.alpha_commitments[1].value,
         commitment_key.h,
         public_key.N * public_key.N);
     all_passed = ExpectTrue(

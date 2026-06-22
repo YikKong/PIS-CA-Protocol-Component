@@ -145,10 +145,10 @@ int main()
     all_passed = ExpectTrue(
         CamenischShoupEnc::CommitmentGeneratorCount == CamenischShoupEnc::PlaintextSlots * CamenischShoupEnc::CiphertextEComponentCount,
         "Commitment generator count matches plaintext layout") && all_passed;
-    all_passed = ExpectTrue(commitment_key.generators.size() == CamenischShoupEnc::CommitmentGeneratorCount, "GenerateKeys initializes commitment generators") && all_passed;
-    for (std::uint32_t i = 0; i < commitment_key.generators.size(); ++i)
+    all_passed = ExpectTrue(commitment_key.g.size() == CamenischShoupEnc::CommitmentGeneratorCount, "GenerateKeys initializes commitment generators") && all_passed;
+    for (std::uint32_t i = 0; i < commitment_key.g.size(); ++i)
     {
-        all_passed = ExpectTrue(commitment_key.generators[i] > 0, "GenerateKeys initializes each commitment generator") && all_passed;
+        all_passed = ExpectTrue(commitment_key.g[i] > 0, "GenerateKeys initializes each commitment generator") && all_passed;
     }
     all_passed = ExpectTrue(commitment_key.h > 0, "GenerateKeys initializes commitment h") && all_passed;
 
@@ -166,7 +166,7 @@ int main()
         all_passed = ExpectTrue(enc.input_ciphertexts[i].u > 0, "InitializeInputs stores ciphertext u") && all_passed;
         all_passed = ExpectTrue(enc.input_ciphertexts[i].e.size() == CamenischShoupEnc::CiphertextEComponentCount, "InitializeInputs stores ciphertext e components") && all_passed;
         all_passed = ExpectTrue(enc.input_commitment_randomness[i] > 0, "InitializeInputs stores commitment randomness") && all_passed;
-        all_passed = ExpectTrue(enc.input_commitments[i] > 0, "InitializeInputs stores commitment") && all_passed;
+        all_passed = ExpectTrue(enc.input_commitments[i].value > 0, "InitializeInputs stores commitment") && all_passed;
 
         std::vector<NTL::ZZ> initialized_plaintext;
         enc.Decrypt(public_key, secret_key, enc.input_ciphertexts[i], initialized_plaintext);
@@ -175,6 +175,39 @@ int main()
 
     const std::vector<NTL::ZZ> first_plaintext = MakePlaintext({3, 5, 7, 11});
     const std::vector<NTL::ZZ> second_plaintext = MakePlaintext({2, 4, 6, 8});
+
+    const NTL::ZZ fixed_commitment_randomness(54321);
+    CamenischShoupEnc::Commitment fixed_commitment;
+    CamenischShoupEnc::Commitment repeated_fixed_commitment;
+    enc.GenerateCommitmentWithRandomness(
+        public_key,
+        commitment_key,
+        first_plaintext,
+        fixed_commitment_randomness,
+        fixed_commitment);
+    enc.GenerateCommitmentWithRandomness(
+        public_key,
+        commitment_key,
+        first_plaintext,
+        fixed_commitment_randomness,
+        repeated_fixed_commitment);
+    all_passed = ExpectTrue(
+        fixed_commitment.value > 0 &&
+            fixed_commitment == repeated_fixed_commitment,
+        "GenerateCommitmentWithRandomness returns a deterministic Commitment") && all_passed;
+
+    NTL::ZZ generated_commitment_randomness;
+    CamenischShoupEnc::Commitment generated_commitment;
+    enc.GenerateCommitment(
+        public_key,
+        commitment_key,
+        first_plaintext,
+        generated_commitment_randomness,
+        generated_commitment);
+    all_passed = ExpectTrue(
+        generated_commitment_randomness > 0 &&
+            generated_commitment.value > 0,
+        "GenerateCommitment returns randomness and a Commitment") && all_passed;
 
     NTL::ZZ first_randomness;
     NTL::ZZ second_randomness;

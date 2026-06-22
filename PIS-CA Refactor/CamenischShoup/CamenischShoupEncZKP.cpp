@@ -41,6 +41,24 @@ namespace
         }
     }
 
+    void AppendCommitment(
+        std::ostringstream& stream,
+        const CamenischShoupEnc::Commitment& commitment)
+    {
+        AppendZZ(stream, commitment.value);
+    }
+
+    void AppendCommitments(
+        std::ostringstream& stream,
+        const std::vector<CamenischShoupEnc::Commitment>& commitments)
+    {
+        stream << commitments.size() << '|';
+        for (const CamenischShoupEnc::Commitment& commitment : commitments)
+        {
+            AppendCommitment(stream, commitment);
+        }
+    }
+
     void AppendCiphertext(std::ostringstream& stream, const CamenischShoupEnc::Ciphertext& ciphertext)
     {
         AppendZZ(stream, ciphertext.u);
@@ -67,7 +85,7 @@ void CamenischShoupEncZKP::GenerateCommitments(
     const CommitmentKey& commitment_key,
     const std::vector<NTL::ZZ>& plaintexts,
     const std::vector<NTL::ZZ>& commitment_randomness,
-    std::vector<NTL::ZZ>& commitments) const
+    std::vector<Commitment>& commitments) const
 {
     commitments.clear();
     commitments.reserve(commitment_randomness.size());
@@ -96,7 +114,7 @@ void CamenischShoupEncZKP::CreateEncProof(
     const std::vector<Ciphertext>& ciphertexts,
     const std::vector<NTL::ZZ>& encryption_randomness,
     const std::vector<NTL::ZZ>& commitment_randomness,
-    const std::vector<NTL::ZZ>& commitments,
+    const std::vector<Commitment>& commitments,
     Proof& proof) const
 {
     proof.plaintexts = plaintexts;
@@ -179,7 +197,7 @@ void CamenischShoupEncZKP::CreateEncProofMessage(
     const std::vector<Ciphertext>& ciphertexts,
     const std::vector<NTL::ZZ>& encryption_randomness,
     const std::vector<NTL::ZZ>& commitment_randomness,
-    const std::vector<NTL::ZZ>& commitments,
+    const std::vector<Commitment>& commitments,
     ProofMessage& proof_message) const
 {
     const std::uint32_t batch_size = static_cast<std::uint32_t>(ciphertexts.size());
@@ -259,7 +277,7 @@ void CamenischShoupEncZKP::GenerateCommitmentsAndEncProof(
     const std::vector<Ciphertext>& ciphertexts,
     const std::vector<NTL::ZZ>& encryption_randomness,
     std::vector<NTL::ZZ>& commitment_randomness,
-    std::vector<NTL::ZZ>& commitments,
+    std::vector<Commitment>& commitments,
     Proof& proof) const
 {
     const std::uint32_t batch_size = static_cast<std::uint32_t>(ciphertexts.size());
@@ -301,7 +319,7 @@ bool CamenischShoupEncZKP::VerifyEncProof(
     const PublicKey& public_key,
     const CommitmentKey& commitment_key,
     const std::vector<Ciphertext>& ciphertexts,
-    const std::vector<NTL::ZZ>& commitments,
+    const std::vector<Commitment>& commitments,
     const ProofMessage& proof_message) const
 {
     const std::uint32_t batch_size = static_cast<std::uint32_t>(ciphertexts.size());
@@ -339,21 +357,21 @@ bool CamenischShoupEncZKP::VerifyEncProof(
     }
 
     const NTL::ZZ commitment_modulus = public_key.N * public_key.N;
-    const NTL::ZZ commitment_left = GenerateCommitment(
+    const Commitment commitment_left = GenerateCommitment(
         public_key,
         commitment_key,
         proof_message.plaintext_randomness_responses,
         proof_message.commitment_randomness_response,
         0);
 
-    NTL::ZZ commitment_right = proof_message.random_commitment;
+    NTL::ZZ commitment_right = proof_message.random_commitment.value;
     for (std::uint32_t batch_index = 0; batch_index < batch_size; ++batch_index)
     {
-        const NTL::ZZ commitment_challenge = PowerMod(commitments[batch_index], challenges[batch_index], commitment_modulus);
+        const NTL::ZZ commitment_challenge = PowerMod(commitments[batch_index].value, challenges[batch_index], commitment_modulus);
         commitment_right = MulMod(commitment_right, commitment_challenge, commitment_modulus);
     }
 
-    if (commitment_left != commitment_right)
+    if (commitment_left.value != commitment_right)
     {
         return false;
     }
@@ -392,40 +410,40 @@ bool CamenischShoupEncZKP::VerifyEncProof(
     return true;
 }
 
-NTL::ZZ CamenischShoupEncZKP::GenerateCommitment(
+CamenischShoupEncZKP::Commitment CamenischShoupEncZKP::GenerateCommitment(
     const PublicKey& public_key,
     const CommitmentKey& commitment_key,
     const std::vector<NTL::ZZ>& plaintexts,
     const NTL::ZZ& commitment_randomness,
     std::uint32_t batch_index) const
 {
-    const NTL::ZZ commitment_modulus = public_key.N * public_key.N;
-    NTL::ZZ commitment = PowerMod(commitment_key.h, commitment_randomness, commitment_modulus);
     const std::uint32_t first_slot = batch_index * CamenischShoupEnc::PlaintextValuesPerCiphertext;
-
-    for (std::uint32_t component_index = 0; component_index < CamenischShoupEnc::CiphertextEComponentCount; ++component_index)
+    std::vector<NTL::ZZ> plaintext;
+    plaintext.reserve(CamenischShoupEnc::PlaintextValuesPerCiphertext);
+    for (std::uint32_t i = 0;
+         i < CamenischShoupEnc::PlaintextValuesPerCiphertext &&
+             first_slot + i < plaintexts.size();
+         ++i)
     {
-        const std::uint32_t component_first_slot = first_slot + component_index * CamenischShoupEnc::PlaintextSlots;
-        const std::uint32_t generator_first_slot = component_index * CamenischShoupEnc::PlaintextSlots;
-        for (std::uint32_t slot_index = 0; slot_index < CamenischShoupEnc::PlaintextSlots && component_first_slot + slot_index < plaintexts.size(); ++slot_index)
-        {
-            const NTL::ZZ commitment_factor = PowerMod(
-                commitment_key.generators[generator_first_slot + slot_index],
-                plaintexts[component_first_slot + slot_index],
-                commitment_modulus);
-            commitment = MulMod(commitment, commitment_factor, commitment_modulus);
-        }
+        plaintext.emplace_back(plaintexts[first_slot + i]);
     }
 
+    Commitment commitment;
+    encryption_.GenerateCommitmentWithRandomness(
+        public_key,
+        commitment_key,
+        plaintext,
+        commitment_randomness,
+        commitment);
     return commitment;
 }
 
 NTL::ZZ CamenischShoupEncZKP::GenerateChallenge(
     const PublicKey& public_key,
     const std::vector<Ciphertext>& ciphertexts,
-    const std::vector<NTL::ZZ>& commitments,
+    const std::vector<Commitment>& commitments,
     const Ciphertext& random_ciphertext,
-    const NTL::ZZ& random_commitment,
+    const Commitment& random_commitment,
     std::uint32_t challenge_index) const
 {
     std::ostringstream stream;
@@ -435,9 +453,9 @@ NTL::ZZ CamenischShoupEncZKP::GenerateChallenge(
     AppendZZ(stream, public_key.g);
     AppendVector(stream, public_key.pk);
     AppendCiphertexts(stream, ciphertexts);
-    AppendVector(stream, commitments);
+    AppendCommitments(stream, commitments);
     AppendCiphertext(stream, random_ciphertext);
-    AppendZZ(stream, random_commitment);
+    AppendCommitment(stream, random_commitment);
     stream << challenge_index << '|';
 
     return HashToZZ(stream.str());
@@ -446,9 +464,9 @@ NTL::ZZ CamenischShoupEncZKP::GenerateChallenge(
 void CamenischShoupEncZKP::GenerateChallenges(
     const PublicKey& public_key,
     const std::vector<Ciphertext>& ciphertexts,
-    const std::vector<NTL::ZZ>& commitments,
+    const std::vector<Commitment>& commitments,
     const Ciphertext& random_ciphertext,
-    const NTL::ZZ& random_commitment,
+    const Commitment& random_commitment,
     std::vector<NTL::ZZ>& challenges) const
 {
     challenges.clear();
@@ -469,10 +487,10 @@ bool CamenischShoupEncZKP::HasExpectedSizes(
     const PublicKey& public_key,
     const CommitmentKey& commitment_key,
     const std::vector<Ciphertext>& ciphertexts,
-    const std::vector<NTL::ZZ>& commitments) const
+    const std::vector<Commitment>& commitments) const
 {
     if (public_key.pk.size() != CamenischShoupEnc::CiphertextEComponentCount ||
-        commitment_key.generators.size() < CamenischShoupEnc::CommitmentGeneratorCount ||
+        commitment_key.g.size() < CamenischShoupEnc::CommitmentGeneratorCount ||
         ciphertexts.empty() ||
         commitments.size() != ciphertexts.size())
     {
@@ -490,21 +508,19 @@ bool CamenischShoupEncZKP::HasExpectedSizes(
     return true;
 }
 
-NTL::ZZ CamenischShoupEncZKP::GenerateVectorCommitment(
+CamenischShoupEncZKP::Commitment CamenischShoupEncZKP::GenerateVectorCommitment(
     const PublicKey& public_key,
     const CommitmentKey& commitment_key,
     const std::vector<NTL::ZZ>& values,
     const NTL::ZZ& randomness) const
 {
-    const NTL::ZZ modulus = public_key.N * public_key.N;
-    NTL::ZZ commitment = PowerMod(commitment_key.h, randomness, modulus);
-    for (std::uint32_t i = 0; i < values.size(); ++i)
-    {
-        commitment = MulMod(
-            commitment,
-            PowerMod(commitment_key.generators[i], values[i], modulus),
-            modulus);
-    }
+    Commitment commitment;
+    encryption_.GenerateCommitmentWithRandomness(
+        public_key,
+        commitment_key,
+        values,
+        randomness,
+        commitment);
     return commitment;
 }
 
@@ -592,7 +608,7 @@ void CamenischShoupEncZKP::CreateBatchBetaCiphertextsAndProof(
     if (output_count == 0 ||
         q < 0 ||
         b_mask_bits <= 0 ||
-        commitment_key.generators.size() < slot_count ||
+        commitment_key.g.size() < slot_count ||
         a.size() != output_count * slot_count ||
         alpha.size() != output_count * slot_count ||
         b.size() != output_count * slot_count ||
@@ -776,7 +792,7 @@ bool CamenischShoupEncZKP::VerifyBatchBetaProof(
 
     if (output_count == 0 ||
         proof_message.q < 0 ||
-        commitment_key.generators.size() < slot_count ||
+        commitment_key.g.size() < slot_count ||
         proof_message.a_commitments.size() != output_count ||
         proof_message.alpha_commitments.size() != output_count ||
         proof_message.b_commitments.size() != output_count ||
@@ -798,9 +814,9 @@ bool CamenischShoupEncZKP::VerifyBatchBetaProof(
     }
 
     const NTL::ZZ commitment_modulus = public_key.N * public_key.N;
-    NTL::ZZ a_right = proof_message.random_a_commitment;
-    NTL::ZZ alpha_right = proof_message.random_alpha_commitment;
-    NTL::ZZ b_right = proof_message.random_b_commitment;
+    NTL::ZZ a_right = proof_message.random_a_commitment.value;
+    NTL::ZZ alpha_right = proof_message.random_alpha_commitment.value;
+    NTL::ZZ b_right = proof_message.random_b_commitment.value;
     Ciphertext beta_right = proof_message.random_beta_ciphertext;
 
     for (std::uint32_t s = 0; s < output_count; ++s)
@@ -826,21 +842,21 @@ bool CamenischShoupEncZKP::VerifyBatchBetaProof(
         a_right = MulMod(
             a_right,
             PowerMod(
-                proof_message.a_commitments[s],
+                proof_message.a_commitments[s].value,
                 expected_challenge,
                 commitment_modulus),
             commitment_modulus);
         alpha_right = MulMod(
             alpha_right,
             PowerMod(
-                proof_message.alpha_commitments[s],
+                proof_message.alpha_commitments[s].value,
                 expected_challenge,
                 commitment_modulus),
             commitment_modulus);
         b_right = MulMod(
             b_right,
             PowerMod(
-                proof_message.b_commitments[s],
+                proof_message.b_commitments[s].value,
                 expected_challenge,
                 commitment_modulus),
             commitment_modulus);
@@ -860,22 +876,24 @@ bool CamenischShoupEncZKP::VerifyBatchBetaProof(
         beta_right = accumulated_beta;
     }
 
-    const NTL::ZZ a_left = GenerateVectorCommitment(
+    const Commitment a_left = GenerateVectorCommitment(
         public_key,
         commitment_key,
         proof_message.a_responses,
         proof_message.a_commitment_randomness_response);
-    const NTL::ZZ alpha_left = GenerateVectorCommitment(
+    const Commitment alpha_left = GenerateVectorCommitment(
         public_key,
         commitment_key,
         proof_message.alpha_responses,
         proof_message.alpha_commitment_randomness_response);
-    const NTL::ZZ b_left = GenerateVectorCommitment(
+    const Commitment b_left = GenerateVectorCommitment(
         public_key,
         commitment_key,
         proof_message.b_responses,
         proof_message.b_commitment_randomness_response);
-    if (a_left != a_right || alpha_left != alpha_right || b_left != b_right)
+    if (a_left.value != a_right ||
+        alpha_left.value != alpha_right ||
+        b_left.value != b_right)
     {
         return false;
     }
@@ -909,17 +927,17 @@ NTL::ZZ CamenischShoupEncZKP::GenerateBatchBetaChallenge(
     AppendZZ(stream, public_key.T);
     AppendZZ(stream, public_key.g);
     AppendVector(stream, public_key.pk);
-    AppendVector(stream, commitment_key.generators);
+    AppendVector(stream, commitment_key.g);
     AppendZZ(stream, commitment_key.h);
     AppendCiphertext(stream, proof_message.base_ciphertext);
     AppendZZ(stream, proof_message.q);
-    AppendVector(stream, proof_message.a_commitments);
-    AppendVector(stream, proof_message.alpha_commitments);
-    AppendVector(stream, proof_message.b_commitments);
+    AppendCommitments(stream, proof_message.a_commitments);
+    AppendCommitments(stream, proof_message.alpha_commitments);
+    AppendCommitments(stream, proof_message.b_commitments);
     AppendCiphertexts(stream, proof_message.beta_ciphertexts);
-    AppendZZ(stream, proof_message.random_a_commitment);
-    AppendZZ(stream, proof_message.random_alpha_commitment);
-    AppendZZ(stream, proof_message.random_b_commitment);
+    AppendCommitment(stream, proof_message.random_a_commitment);
+    AppendCommitment(stream, proof_message.random_alpha_commitment);
+    AppendCommitment(stream, proof_message.random_b_commitment);
     AppendCiphertext(stream, proof_message.random_beta_ciphertext);
     stream << output_index << '|';
     return HashToZZ(stream.str());
@@ -950,10 +968,10 @@ bool CamenischShoupEncZKP::IsValidCiphertext(
 
 bool CamenischShoupEncZKP::IsValidCommitment(
     const PublicKey& public_key,
-    const NTL::ZZ& commitment) const
+    const Commitment& commitment) const
 {
     const NTL::ZZ modulus = public_key.N * public_key.N;
-    return commitment > 0 &&
-        commitment < modulus &&
-        GCD(commitment, modulus) == 1;
+    return commitment.value > 0 &&
+        commitment.value < modulus &&
+        GCD(commitment.value, modulus) == 1;
 }
