@@ -2,6 +2,7 @@
 
 #include <array>
 #include <iostream>
+#include <memory>
 #include <sstream>
 #include <string>
 
@@ -72,6 +73,235 @@ namespace
         {
             AppendCiphertext(stream, ciphertext);
         }
+    }
+
+    struct BNDeleter
+    {
+        void operator()(BIGNUM* value) const
+        {
+            BN_clear_free(value);
+        }
+    };
+
+    struct PointDeleter
+    {
+        void operator()(EC_POINT* value) const
+        {
+            EC_POINT_free(value);
+        }
+    };
+
+    struct BNCTXDeleter
+    {
+        void operator()(BN_CTX* value) const
+        {
+            BN_CTX_free(value);
+        }
+    };
+
+    using UniqueBN = std::unique_ptr<BIGNUM, BNDeleter>;
+    using UniquePoint = std::unique_ptr<EC_POINT, PointDeleter>;
+    using UniqueBNCTX = std::unique_ptr<BN_CTX, BNCTXDeleter>;
+
+    std::shared_ptr<BIGNUM> NewSharedBN()
+    {
+        BIGNUM* value = BN_new();
+        if (value == nullptr)
+        {
+            throw std::bad_alloc();
+        }
+        BN_zero(value);
+        return std::shared_ptr<BIGNUM>(value, BNDeleter{});
+    }
+
+    UniqueBN ZZToBN(const NTL::ZZ& value)
+    {
+        BIGNUM* result = nullptr;
+        std::ostringstream stream;
+        stream << value;
+        const std::string decimal = stream.str();
+        if (BN_dec2bn(&result, decimal.c_str()) == 0)
+        {
+            BN_clear_free(result);
+            return UniqueBN(nullptr);
+        }
+        return UniqueBN(result);
+    }
+
+    void AppendPoint(
+        std::ostringstream& stream,
+        const EC_GROUP* group,
+        const EC_POINT* point)
+    {
+        if (group == nullptr || point == nullptr)
+        {
+            stream << "invalid-point|";
+            return;
+        }
+
+        const size_t size = EC_POINT_point2oct(
+            group,
+            point,
+            POINT_CONVERSION_COMPRESSED,
+            nullptr,
+            0,
+            nullptr);
+        std::vector<unsigned char> encoded(size);
+        if (size == 0 ||
+            EC_POINT_point2oct(
+                group,
+                point,
+                POINT_CONVERSION_COMPRESSED,
+                encoded.data(),
+                encoded.size(),
+                nullptr) != size)
+        {
+            stream << "invalid-point|";
+            return;
+        }
+
+        stream << encoded.size() << '|';
+        static constexpr char Hex[] = "0123456789abcdef";
+        for (unsigned char byte : encoded)
+        {
+            stream << Hex[byte >> 4] << Hex[byte & 0x0f];
+        }
+        stream << '|';
+    }
+
+    void AppendElGamalCommitment(
+        std::ostringstream& stream,
+        const ElGamalEnc::Commitment& commitment)
+    {
+        AppendPoint(stream, commitment.group, commitment.value);
+    }
+
+    void AppendElGamalCommitments(
+        std::ostringstream& stream,
+        const std::vector<ElGamalEnc::Commitment>& commitments)
+    {
+        stream << commitments.size() << '|';
+        for (const ElGamalEnc::Commitment& commitment : commitments)
+        {
+            AppendElGamalCommitment(stream, commitment);
+        }
+    }
+
+    void AppendBIGNUM(std::ostringstream& stream, const BIGNUM* value)
+    {
+        if (value == nullptr)
+        {
+            stream << "null-bignum|";
+            return;
+        }
+        char* decimal = BN_bn2dec(value);
+        if (decimal == nullptr)
+        {
+            stream << "invalid-bignum|";
+            return;
+        }
+        stream << decimal << '|';
+        OPENSSL_free(decimal);
+    }
+
+    void AppendElGamalRandomness(
+        std::ostringstream& stream,
+        const std::vector<std::shared_ptr<BIGNUM>>& randomness)
+    {
+        stream << randomness.size() << '|';
+        for (const auto& value : randomness)
+        {
+            AppendBIGNUM(stream, value.get());
+        }
+    }
+
+    bool GenerateElGamalCommitment(
+        const ElGamalEnc& elgamal,
+        const ElGamalEnc::CommitmentKey& commitment_key,
+        const NTL::ZZ& value,
+        const BIGNUM* randomness,
+        ElGamalEnc::Commitment& commitment)
+    {
+        UniqueBN value_bn = ZZToBN(value);
+        if (!value_bn || randomness == nullptr)
+        {
+            return false;
+        }
+        elgamal.GenerateCommitmentWithRandomness(
+            commitment_key,
+            value_bn.get(),
+            randomness,
+            commitment);
+        return elgamal.IsValidCommitment(commitment);
+    }
+
+    bool AddChallengeProduct(
+        const ElGamalEnc& elgamal,
+        BIGNUM* accumulator,
+        const NTL::ZZ& challenge,
+        const BIGNUM* value)
+    {
+        UniqueBN challenge_bn = ZZToBN(challenge);
+        UniqueBN product(BN_new());
+        UniqueBNCTX context(BN_CTX_new());
+        return accumulator != nullptr &&
+            value != nullptr &&
+            challenge_bn &&
+            product &&
+            context &&
+            BN_mod_mul(
+                product.get(),
+                challenge_bn.get(),
+                value,
+                elgamal.Order(),
+                context.get()) == 1 &&
+            BN_mod_add(
+                accumulator,
+                accumulator,
+                product.get(),
+                elgamal.Order(),
+                context.get()) == 1;
+    }
+
+    bool AccumulateElGamalCommitment(
+        const ElGamalEnc& elgamal,
+        ElGamalEnc::Commitment& accumulator,
+        const ElGamalEnc::Commitment& commitment,
+        const NTL::ZZ& scalar)
+    {
+        if (!elgamal.IsValidCommitment(accumulator) ||
+            !elgamal.IsValidCommitment(commitment))
+        {
+            return false;
+        }
+
+        UniqueBN scalar_bn = ZZToBN(scalar);
+        UniqueBN normalized(BN_new());
+        UniqueBNCTX context(BN_CTX_new());
+        UniquePoint scaled(EC_POINT_new(elgamal.Group()));
+        if (!scalar_bn || !normalized || !context || !scaled ||
+            BN_nnmod(
+                normalized.get(),
+                scalar_bn.get(),
+                elgamal.Order(),
+                context.get()) != 1 ||
+            EC_POINT_mul(
+                elgamal.Group(),
+                scaled.get(),
+                nullptr,
+                commitment.value,
+                normalized.get(),
+                context.get()) != 1 ||
+            EC_POINT_add(
+                elgamal.Group(),
+                accumulator.value,
+                accumulator.value,
+                scaled.get(),
+                context.get()) != 1)
+        {
+            return false;
+        }
+        return true;
     }
 }
 
@@ -912,6 +1142,572 @@ bool CamenischShoupEncZKP::VerifyBatchBetaProof(
     }
 
     return true;
+}
+
+void CamenischShoupEncZKP::CreateDecProofAndCommitments(
+    const PublicKey& public_key,
+    const CamenischShoupEnc::SecretKey& secret_key,
+    const CommitmentKey& commitment_key,
+    const ElGamalEnc& elgamal,
+    const ElGamalEnc::CommitmentKey& elgamal_commitment_key,
+    const std::vector<Ciphertext>& ciphertexts,
+    DecProof& proof) const
+{
+    static_assert(
+        CamenischShoupEnc::CiphertextEComponentCount == 1,
+        "The decryption proof currently assumes one packed e component");
+
+    proof = DecProof{};
+    const std::uint32_t ciphertext_count =
+        static_cast<std::uint32_t>(ciphertexts.size());
+    const std::uint32_t slot_count =
+        CamenischShoupEnc::PlaintextValuesPerCiphertext;
+    if (ciphertext_count == 0 ||
+        secret_key.sk.size() != CamenischShoupEnc::CiphertextEComponentCount ||
+        commitment_key.g.size() < slot_count ||
+        !elgamal.IsValidCommitmentKey(elgamal_commitment_key))
+    {
+        std::cout << "decryption proof input error " << std::endl;
+        return;
+    }
+    for (const Ciphertext& ciphertext : ciphertexts)
+    {
+        if (!IsValidCiphertext(public_key, ciphertext))
+        {
+            std::cout << "decryption proof ciphertext error " << std::endl;
+            return;
+        }
+    }
+
+    DecProofMessage& message = proof.message;
+    message.ciphertexts = ciphertexts;
+    message.camenisch_shoup_beta_commitments.reserve(ciphertext_count);
+    message.elgamal_beta_commitments.reserve(
+        ciphertext_count * slot_count);
+    proof.camenisch_shoup_commitment_randomness.reserve(
+        ciphertext_count);
+    proof.elgamal_commitment_randomness.reserve(
+        ciphertext_count * slot_count);
+    proof.beta.reserve(ciphertext_count * slot_count);
+
+    for (std::uint32_t s = 0; s < ciphertext_count; ++s)
+    {
+        std::vector<NTL::ZZ> beta_slice;
+        encryption_.Decrypt(
+            public_key,
+            secret_key,
+            ciphertexts[s],
+            beta_slice);
+        if (beta_slice.size() != slot_count)
+        {
+            std::cout << "decryption proof plaintext size error " << std::endl;
+            proof = DecProof{};
+            return;
+        }
+
+        NTL::ZZ vector_randomness;
+        RandomBits(vector_randomness, NumBits(public_key.N) - 10);
+        proof.camenisch_shoup_commitment_randomness.emplace_back(
+            vector_randomness);
+        message.camenisch_shoup_beta_commitments.emplace_back(
+            GenerateVectorCommitment(
+            public_key,
+            commitment_key,
+            beta_slice,
+            vector_randomness));
+
+        for (const NTL::ZZ& beta_value : beta_slice)
+        {
+            std::shared_ptr<BIGNUM> commitment_randomness =
+                NewSharedBN();
+            elgamal.GenerateRandomScalar(commitment_randomness.get());
+            ElGamalEnc::Commitment commitment;
+            if (!GenerateElGamalCommitment(
+                    elgamal,
+                    elgamal_commitment_key,
+                    beta_value,
+                    commitment_randomness.get(),
+                    commitment))
+            {
+                std::cout << "ElGamal beta commitment generation error " << std::endl;
+                proof = DecProof{};
+                return;
+            }
+            proof.beta.emplace_back(beta_value);
+            proof.elgamal_commitment_randomness.emplace_back(
+                std::move(commitment_randomness));
+            message.elgamal_beta_commitments.emplace_back(
+                std::move(commitment));
+        }
+    }
+
+    proof.beta_masks.reserve(slot_count);
+    proof.elgamal_commitment_randomness_masks.reserve(slot_count);
+    message.random_elgamal_beta_commitments.reserve(slot_count);
+    for (std::uint32_t i = 0; i < slot_count; ++i)
+    {
+        NTL::ZZ beta_mask;
+        std::shared_ptr<BIGNUM> commitment_randomness_mask =
+            NewSharedBN();
+        RandomBits(beta_mask, CamenischShoupEnc::SubPlaintextLens - 10);
+        elgamal.GenerateRandomScalar(commitment_randomness_mask.get());
+        ElGamalEnc::Commitment commitment;
+        if (!GenerateElGamalCommitment(
+                elgamal,
+                elgamal_commitment_key,
+                beta_mask,
+                commitment_randomness_mask.get(),
+                commitment))
+        {
+            std::cout << "ElGamal random beta commitment generation error " << std::endl;
+            proof = DecProof{};
+            return;
+        }
+        proof.beta_masks.emplace_back(beta_mask);
+        proof.elgamal_commitment_randomness_masks.emplace_back(
+            std::move(commitment_randomness_mask));
+        message.random_elgamal_beta_commitments.emplace_back(
+            std::move(commitment));
+    }
+
+    RandomBits(
+        proof.camenisch_shoup_commitment_randomness_mask,
+        2 * CamenischShoupEnc::PrimeBits);
+    message.random_camenisch_shoup_beta_commitment =
+        GenerateVectorCommitment(
+        public_key,
+        commitment_key,
+        proof.beta_masks,
+        proof.camenisch_shoup_commitment_randomness_mask);
+    NTL::ZZ random_encryption_randomness;
+    encryption_.Encrypt(
+        public_key,
+        proof.beta_masks,
+        random_encryption_randomness,
+        message.random_ciphertext);
+
+    message.batch_challenges.reserve(ciphertext_count);
+    for (std::uint32_t s = 0; s < ciphertext_count; ++s)
+    {
+        message.batch_challenges.emplace_back(GenerateDecBatchChallenge(
+            public_key,
+            commitment_key,
+            elgamal,
+            elgamal_commitment_key,
+            message,
+            s));
+    }
+
+    message.beta_responses = proof.beta_masks;
+    message.camenisch_shoup_commitment_randomness_response =
+        proof.camenisch_shoup_commitment_randomness_mask;
+    message.elgamal_commitment_randomness_responses =
+        proof.elgamal_commitment_randomness_masks;
+    for (std::uint32_t s = 0; s < ciphertext_count; ++s)
+    {
+        const NTL::ZZ& challenge = message.batch_challenges[s];
+        message.camenisch_shoup_commitment_randomness_response +=
+            challenge *
+            proof.camenisch_shoup_commitment_randomness[s];
+        for (std::uint32_t i = 0; i < slot_count; ++i)
+        {
+            const std::uint32_t index = s * slot_count + i;
+            message.beta_responses[i] += challenge * proof.beta[index];
+            if (!AddChallengeProduct(
+                    elgamal,
+                    message.elgamal_commitment_randomness_responses[i].get(),
+                    challenge,
+                    proof.elgamal_commitment_randomness[index].get()))
+            {
+                std::cout
+                    << "ElGamal commitment randomness response error "
+                    << std::endl;
+                proof = DecProof{};
+                return;
+            }
+        }
+    }
+
+    Ciphertext aggregate_ciphertext = message.random_ciphertext;
+    for (std::uint32_t s = 0; s < ciphertext_count; ++s)
+    {
+        Ciphertext challenged;
+        Ciphertext accumulated;
+        encryption_.ScalarMultiply(
+            public_key,
+            challenged,
+            ciphertexts[s],
+            message.batch_challenges[s]);
+        encryption_.HomomorphicAdd(
+            public_key,
+            accumulated,
+            aggregate_ciphertext,
+            challenged);
+        aggregate_ciphertext = accumulated;
+    }
+
+    const NTL::ZZ packed_response =
+        PackBatchValues(public_key, message.beta_responses);
+    message.decryption_announcements.reserve(
+        CamenischShoupEnc::CiphertextEComponentCount);
+    proof.secret_key_masks.reserve(
+        CamenischShoupEnc::CiphertextEComponentCount);
+    for (std::uint32_t i = 0;
+         i < CamenischShoupEnc::CiphertextEComponentCount;
+         ++i)
+    {
+        NTL::ZZ secret_key_mask;
+        RandomBits(secret_key_mask, 2 * CamenischShoupEnc::PrimeBits);
+        proof.secret_key_masks.emplace_back(secret_key_mask);
+        message.decryption_announcements.emplace_back(MulMod(
+            PowerMod(
+                public_key.T,
+                packed_response,
+                public_key.N_zeta_plus_one),
+            PowerMod(
+                aggregate_ciphertext.u,
+                secret_key_mask,
+                public_key.N_zeta_plus_one),
+            public_key.N_zeta_plus_one));
+    }
+
+    message.final_challenge = GenerateDecFinalChallenge(
+        public_key,
+        commitment_key,
+        elgamal,
+        elgamal_commitment_key,
+        message);
+    message.secret_key_responses.reserve(secret_key.sk.size());
+    for (std::uint32_t i = 0; i < secret_key.sk.size(); ++i)
+    {
+        message.secret_key_responses.emplace_back(
+            proof.secret_key_masks[i] +
+            message.final_challenge * secret_key.sk[i]);
+    }
+}
+
+bool CamenischShoupEncZKP::VerifyDecProof(
+    const PublicKey& public_key,
+    const CommitmentKey& commitment_key,
+    const ElGamalEnc& elgamal,
+    const ElGamalEnc::CommitmentKey& elgamal_commitment_key,
+    const DecProofMessage& message) const
+{
+    static_assert(
+        CamenischShoupEnc::CiphertextEComponentCount == 1,
+        "The decryption proof currently assumes one packed e component");
+
+    const std::uint32_t ciphertext_count =
+        static_cast<std::uint32_t>(message.ciphertexts.size());
+    const std::uint32_t slot_count =
+        CamenischShoupEnc::PlaintextValuesPerCiphertext;
+    if (ciphertext_count == 0 ||
+        public_key.N <= 1 ||
+        public_key.N_zeta_plus_one <= 1 ||
+        public_key.T <= 0 ||
+        commitment_key.g.size() < slot_count ||
+        !elgamal.IsValidCommitmentKey(elgamal_commitment_key) ||
+        message.camenisch_shoup_beta_commitments.size() !=
+            ciphertext_count ||
+        message.elgamal_beta_commitments.size() !=
+            ciphertext_count * slot_count ||
+        message.random_elgamal_beta_commitments.size() != slot_count ||
+        message.batch_challenges.size() != ciphertext_count ||
+        message.beta_responses.size() != slot_count ||
+        message.elgamal_commitment_randomness_responses.size() !=
+            slot_count ||
+        message.decryption_announcements.size() !=
+            CamenischShoupEnc::CiphertextEComponentCount ||
+        message.secret_key_responses.size() !=
+            CamenischShoupEnc::CiphertextEComponentCount ||
+        !IsValidCiphertext(public_key, message.random_ciphertext) ||
+        !IsValidCommitment(
+            public_key,
+            message.random_camenisch_shoup_beta_commitment))
+    {
+        return false;
+    }
+
+    if (message.camenisch_shoup_commitment_randomness_response < 0 ||
+        message.final_challenge < 0)
+    {
+        return false;
+    }
+    const NTL::ZZ beta_response_bound =
+        public_key.plaintext_packing_base *
+        (1 + ciphertext_count *
+            power(NTL::ZZ(2), ElGamalEnc::HashBytes * 8));
+    for (const NTL::ZZ& response : message.beta_responses)
+    {
+        if (response < 0 || response > beta_response_bound)
+        {
+            return false;
+        }
+    }
+    for (const std::shared_ptr<BIGNUM>& response :
+         message.elgamal_commitment_randomness_responses)
+    {
+        if (!response || BN_is_negative(response.get()))
+        {
+            return false;
+        }
+    }
+    for (const NTL::ZZ& response : message.secret_key_responses)
+    {
+        if (response < 0)
+        {
+            return false;
+        }
+    }
+    for (const NTL::ZZ& announcement :
+         message.decryption_announcements)
+    {
+        if (announcement <= 0 ||
+            announcement >= public_key.N_zeta_plus_one ||
+            GCD(announcement, public_key.N_zeta_plus_one) != 1)
+        {
+            return false;
+        }
+    }
+
+    for (std::uint32_t s = 0; s < ciphertext_count; ++s)
+    {
+        if (!IsValidCiphertext(public_key, message.ciphertexts[s]) ||
+            !IsValidCommitment(
+                public_key,
+                message.camenisch_shoup_beta_commitments[s]) ||
+            message.batch_challenges[s] != GenerateDecBatchChallenge(
+                public_key,
+                commitment_key,
+                elgamal,
+                elgamal_commitment_key,
+                message,
+                s))
+        {
+            return false;
+        }
+    }
+    for (const ElGamalEnc::Commitment& commitment :
+         message.elgamal_beta_commitments)
+    {
+        if (!elgamal.IsValidCommitment(commitment))
+        {
+            return false;
+        }
+    }
+    for (const ElGamalEnc::Commitment& commitment :
+         message.random_elgamal_beta_commitments)
+    {
+        if (!elgamal.IsValidCommitment(commitment))
+        {
+            return false;
+        }
+    }
+
+    const NTL::ZZ commitment_modulus = public_key.N * public_key.N;
+    NTL::ZZ vector_commitment_right =
+        message.random_camenisch_shoup_beta_commitment.value;
+    for (std::uint32_t s = 0; s < ciphertext_count; ++s)
+    {
+        vector_commitment_right = MulMod(
+            vector_commitment_right,
+            PowerMod(
+                message.camenisch_shoup_beta_commitments[s].value,
+                message.batch_challenges[s],
+                commitment_modulus),
+            commitment_modulus);
+    }
+    const Commitment vector_commitment_left = GenerateVectorCommitment(
+        public_key,
+        commitment_key,
+        message.beta_responses,
+        message.camenisch_shoup_commitment_randomness_response);
+    if (vector_commitment_left.value != vector_commitment_right)
+    {
+        return false;
+    }
+
+    for (std::uint32_t i = 0; i < slot_count; ++i)
+    {
+        ElGamalEnc::Commitment right =
+            message.random_elgamal_beta_commitments[i];
+        for (std::uint32_t s = 0; s < ciphertext_count; ++s)
+        {
+            if (!AccumulateElGamalCommitment(
+                    elgamal,
+                    right,
+                    message.elgamal_beta_commitments[
+                        s * slot_count + i],
+                    message.batch_challenges[s]))
+            {
+                return false;
+            }
+        }
+
+        ElGamalEnc::Commitment left;
+        if (!GenerateElGamalCommitment(
+                elgamal,
+                elgamal_commitment_key,
+                message.beta_responses[i],
+                message.elgamal_commitment_randomness_responses[i].get(),
+                left) ||
+            !elgamal.PointsEqual(left.value, right.value))
+        {
+            return false;
+        }
+    }
+
+    if (message.final_challenge != GenerateDecFinalChallenge(
+            public_key,
+            commitment_key,
+            elgamal,
+            elgamal_commitment_key,
+            message))
+    {
+        return false;
+    }
+
+    Ciphertext aggregate_ciphertext = message.random_ciphertext;
+    for (std::uint32_t s = 0; s < ciphertext_count; ++s)
+    {
+        Ciphertext challenged;
+        Ciphertext accumulated;
+        encryption_.ScalarMultiply(
+            public_key,
+            challenged,
+            message.ciphertexts[s],
+            message.batch_challenges[s]);
+        encryption_.HomomorphicAdd(
+            public_key,
+            accumulated,
+            aggregate_ciphertext,
+            challenged);
+        aggregate_ciphertext = accumulated;
+    }
+
+    const NTL::ZZ packed_response =
+        PackBatchValues(public_key, message.beta_responses);
+    for (std::uint32_t i = 0;
+         i < CamenischShoupEnc::CiphertextEComponentCount;
+         ++i)
+    {
+        const NTL::ZZ left = MulMod(
+            PowerMod(
+                public_key.T,
+                packed_response * (message.final_challenge + 1),
+                public_key.N_zeta_plus_one),
+            PowerMod(
+                aggregate_ciphertext.u,
+                message.secret_key_responses[i],
+                public_key.N_zeta_plus_one),
+            public_key.N_zeta_plus_one);
+        const NTL::ZZ right = MulMod(
+            message.decryption_announcements[i],
+            PowerMod(
+                aggregate_ciphertext.e[i],
+                message.final_challenge,
+                public_key.N_zeta_plus_one),
+            public_key.N_zeta_plus_one);
+        if (left != right)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+NTL::ZZ CamenischShoupEncZKP::GenerateDecBatchChallenge(
+    const PublicKey& public_key,
+    const CommitmentKey& commitment_key,
+    const ElGamalEnc& elgamal,
+    const ElGamalEnc::CommitmentKey& elgamal_commitment_key,
+    const DecProofMessage& message,
+    std::uint32_t ciphertext_index) const
+{
+    std::ostringstream stream;
+    stream << "CamenischShoupBatchDecryptionCommitmentProof|";
+    AppendZZ(stream, public_key.N);
+    AppendZZ(stream, public_key.N_zeta_plus_one);
+    AppendZZ(stream, public_key.T);
+    AppendZZ(stream, public_key.g);
+    AppendVector(stream, public_key.pk);
+    AppendVector(stream, commitment_key.g);
+    AppendZZ(stream, commitment_key.h);
+    AppendPoint(
+        stream,
+        elgamal.Group(),
+        elgamal_commitment_key.g);
+    AppendPoint(
+        stream,
+        elgamal.Group(),
+        elgamal_commitment_key.h);
+    AppendCiphertexts(stream, message.ciphertexts);
+    AppendCommitments(
+        stream,
+        message.camenisch_shoup_beta_commitments);
+    AppendElGamalCommitments(
+        stream,
+        message.elgamal_beta_commitments);
+    AppendCiphertext(stream, message.random_ciphertext);
+    AppendCommitment(
+        stream,
+        message.random_camenisch_shoup_beta_commitment);
+    AppendElGamalCommitments(
+        stream,
+        message.random_elgamal_beta_commitments);
+    stream << ciphertext_index << '|';
+    return HashToZZ(stream.str());
+}
+
+NTL::ZZ CamenischShoupEncZKP::GenerateDecFinalChallenge(
+    const PublicKey& public_key,
+    const CommitmentKey& commitment_key,
+    const ElGamalEnc& elgamal,
+    const ElGamalEnc::CommitmentKey& elgamal_commitment_key,
+    const DecProofMessage& message) const
+{
+    std::ostringstream stream;
+    stream << "CamenischShoupBatchDecryptionSecretKeyProof|";
+    AppendZZ(stream, public_key.N);
+    AppendZZ(stream, public_key.N_zeta_plus_one);
+    AppendZZ(stream, public_key.T);
+    AppendZZ(stream, public_key.g);
+    AppendVector(stream, public_key.pk);
+    AppendVector(stream, commitment_key.g);
+    AppendZZ(stream, commitment_key.h);
+    AppendPoint(
+        stream,
+        elgamal.Group(),
+        elgamal_commitment_key.g);
+    AppendPoint(
+        stream,
+        elgamal.Group(),
+        elgamal_commitment_key.h);
+    AppendCiphertexts(stream, message.ciphertexts);
+    AppendCommitments(
+        stream,
+        message.camenisch_shoup_beta_commitments);
+    AppendElGamalCommitments(
+        stream,
+        message.elgamal_beta_commitments);
+    AppendCiphertext(stream, message.random_ciphertext);
+    AppendCommitment(
+        stream,
+        message.random_camenisch_shoup_beta_commitment);
+    AppendElGamalCommitments(
+        stream,
+        message.random_elgamal_beta_commitments);
+    AppendVector(stream, message.batch_challenges);
+    AppendVector(stream, message.beta_responses);
+    AppendZZ(
+        stream,
+        message.camenisch_shoup_commitment_randomness_response);
+    AppendElGamalRandomness(
+        stream,
+        message.elgamal_commitment_randomness_responses);
+    AppendVector(stream, message.decryption_announcements);
+    return HashToZZ(stream.str());
 }
 
 NTL::ZZ CamenischShoupEncZKP::GenerateBatchBetaChallenge(

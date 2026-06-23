@@ -5,11 +5,13 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 #include <NTL/ZZ.h>
 
 #include "CamenischShoupEnc.h"
+#include "../ElGamal/ElGamalEnc.h"
 
 class CamenischShoupEncZKP
 {
@@ -157,6 +159,59 @@ public:
         const CommitmentKey& commitment_key,
         const BatchBetaProofMessage& proof_message) const;
 
+    struct DecProofMessage
+    {
+        std::vector<Ciphertext> ciphertexts;
+        std::vector<Commitment> camenisch_shoup_beta_commitments;
+        std::vector<ElGamalEnc::Commitment> elgamal_beta_commitments;
+        Ciphertext random_ciphertext;
+        Commitment random_camenisch_shoup_beta_commitment;
+        std::vector<ElGamalEnc::Commitment>
+            random_elgamal_beta_commitments;
+        std::vector<NTL::ZZ> batch_challenges;
+        std::vector<NTL::ZZ> beta_responses;
+        NTL::ZZ camenisch_shoup_commitment_randomness_response;
+        std::vector<std::shared_ptr<BIGNUM>>
+            elgamal_commitment_randomness_responses;
+        std::vector<NTL::ZZ> decryption_announcements;
+        NTL::ZZ final_challenge;
+        std::vector<NTL::ZZ> secret_key_responses;
+    };
+
+    struct DecProof
+    {
+        std::vector<NTL::ZZ> beta;
+        std::vector<NTL::ZZ>
+            camenisch_shoup_commitment_randomness;
+        std::vector<std::shared_ptr<BIGNUM>>
+            elgamal_commitment_randomness;
+        std::vector<NTL::ZZ> beta_masks;
+        NTL::ZZ camenisch_shoup_commitment_randomness_mask;
+        std::vector<std::shared_ptr<BIGNUM>>
+            elgamal_commitment_randomness_masks;
+        std::vector<NTL::ZZ> secret_key_masks;
+        DecProofMessage message;
+    };
+
+    // Decrypts the batched ciphertexts, commits to every beta vector with the
+    // Camenisch-Shoup commitment key, commits to every beta slot with an
+    // ElGamal/Pedersen scalar commitment, and proves that all three views agree.
+    void CreateDecProofAndCommitments(
+        const PublicKey& public_key,
+        const CamenischShoupEnc::SecretKey& secret_key,
+        const CommitmentKey& commitment_key,
+        const ElGamalEnc& elgamal,
+        const ElGamalEnc::CommitmentKey& elgamal_commitment_key,
+        const std::vector<Ciphertext>& ciphertexts,
+        DecProof& proof) const;
+
+    bool VerifyDecProof(
+        const PublicKey& public_key,
+        const CommitmentKey& commitment_key,
+        const ElGamalEnc& elgamal,
+        const ElGamalEnc::CommitmentKey& elgamal_commitment_key,
+        const DecProofMessage& proof_message) const;
+
 private:
     Commitment GenerateCommitment(
         const PublicKey& public_key,
@@ -211,6 +266,21 @@ private:
         const CommitmentKey& commitment_key,
         const BatchBetaProofMessage& proof_message,
         std::uint32_t output_index) const;
+
+    NTL::ZZ GenerateDecBatchChallenge(
+        const PublicKey& public_key,
+        const CommitmentKey& commitment_key,
+        const ElGamalEnc& elgamal,
+        const ElGamalEnc::CommitmentKey& elgamal_commitment_key,
+        const DecProofMessage& proof_message,
+        std::uint32_t ciphertext_index) const;
+
+    NTL::ZZ GenerateDecFinalChallenge(
+        const PublicKey& public_key,
+        const CommitmentKey& commitment_key,
+        const ElGamalEnc& elgamal,
+        const ElGamalEnc::CommitmentKey& elgamal_commitment_key,
+        const DecProofMessage& proof_message) const;
 
     bool IsValidCiphertext(const PublicKey& public_key, const Ciphertext& ciphertext) const;
     bool IsValidCommitment(const PublicKey& public_key, const Commitment& commitment) const;

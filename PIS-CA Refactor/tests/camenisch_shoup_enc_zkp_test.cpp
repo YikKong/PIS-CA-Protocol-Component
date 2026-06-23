@@ -8,6 +8,7 @@
 
 #include "../CamenischShoup/CamenischShoupEnc.h"
 #include "../CamenischShoup/CamenischShoupEncZKP.h"
+#include "../ElGamal/ElGamalEnc.h"
 
 namespace
 {
@@ -71,6 +72,23 @@ int main()
         zkp_commitments);
     all_passed = ExpectEqual(zkp_commitments, enc.input_commitments, "ZKP recomputes Enc input commitments") && all_passed;
 
+    std::vector<CamenischShoupEnc::Commitment> invalid_commitments = enc.input_commitments;
+    std::vector<NTL::ZZ> oversized_plaintexts(
+        enc.input_commitment_randomness.size() *
+            CamenischShoupEnc::PlaintextValuesPerCiphertext +
+        1,
+        NTL::ZZ(1));
+    zkp.GenerateCommitments(
+        public_key,
+        commitment_key,
+        oversized_plaintexts,
+        enc.input_commitment_randomness,
+        invalid_commitments);
+    all_passed = ExpectTrue(
+        invalid_commitments.empty(),
+        "GenerateCommitments rejects an oversized plaintext set") &&
+        all_passed;
+
     CamenischShoupEncZKP::Proof proof;
     zkp.CreateEncProof(
         public_key,
@@ -108,11 +126,150 @@ int main()
         zkp.VerifyEncProof(public_key, commitment_key, enc.input_ciphertexts, enc.input_commitments, proof.message),
         "VerifyEncProof accepts proof message with external Enc inputs") && all_passed;
 
+    CamenischShoupEncZKP::ProofMessage direct_message;
+    zkp.CreateEncProofMessage(
+        public_key,
+        commitment_key,
+        enc.input_plaintexts,
+        enc.input_ciphertexts,
+        enc.input_encryption_randomness,
+        enc.input_commitment_randomness,
+        enc.input_commitments,
+        direct_message);
+    all_passed = ExpectTrue(
+        zkp.VerifyEncProof(
+            public_key,
+            commitment_key,
+            direct_message),
+        "CreateEncProofMessage produces a verifiable proof message") &&
+        all_passed;
+
+    std::vector<NTL::ZZ> generated_commitment_randomness;
+    std::vector<CamenischShoupEnc::Commitment> generated_commitments;
+    CamenischShoupEncZKP::Proof generated_proof;
+    zkp.GenerateCommitmentsAndEncProof(
+        public_key,
+        commitment_key,
+        enc.input_plaintexts,
+        enc.input_ciphertexts,
+        enc.input_encryption_randomness,
+        generated_commitment_randomness,
+        generated_commitments,
+        generated_proof);
+    all_passed = ExpectTrue(
+        generated_commitment_randomness.size() ==
+            enc.input_ciphertexts.size() &&
+            generated_commitments.size() ==
+                enc.input_ciphertexts.size() &&
+            zkp.VerifyEncProof(
+                public_key,
+                commitment_key,
+                generated_proof.message),
+        "GenerateCommitmentsAndEncProof produces commitments and a verifiable proof") &&
+        all_passed;
+
+    CamenischShoupEncZKP::Proof invalid_enc_proof;
+    std::vector<NTL::ZZ> short_encryption_randomness =
+        enc.input_encryption_randomness;
+    short_encryption_randomness.pop_back();
+    zkp.CreateEncProof(
+        public_key,
+        commitment_key,
+        enc.input_plaintexts,
+        enc.input_ciphertexts,
+        short_encryption_randomness,
+        enc.input_commitment_randomness,
+        enc.input_commitments,
+        invalid_enc_proof);
+    all_passed = ExpectTrue(
+        invalid_enc_proof.message.challenges.empty(),
+        "CreateEncProof rejects mismatched encryption randomness") &&
+        all_passed;
+
+    CamenischShoupEncZKP::ProofMessage invalid_direct_message;
+    zkp.CreateEncProofMessage(
+        public_key,
+        commitment_key,
+        enc.input_plaintexts,
+        enc.input_ciphertexts,
+        short_encryption_randomness,
+        enc.input_commitment_randomness,
+        enc.input_commitments,
+        invalid_direct_message);
+    all_passed = ExpectTrue(
+        invalid_direct_message.challenges.empty(),
+        "CreateEncProofMessage rejects mismatched encryption randomness") &&
+        all_passed;
+
     CamenischShoupEncZKP::ProofMessage tampered_message = proof.message;
     tampered_message.plaintext_randomness_responses[0] += 1;
     all_passed = ExpectTrue(
         !zkp.VerifyEncProof(public_key, commitment_key, tampered_message),
         "VerifyEncProof rejects tampered plaintext response") && all_passed;
+
+    tampered_message = proof.message;
+    tampered_message.challenges[0] += 1;
+    all_passed = ExpectTrue(
+        !zkp.VerifyEncProof(public_key, commitment_key, tampered_message),
+        "VerifyEncProof rejects a tampered Fiat-Shamir challenge") &&
+        all_passed;
+
+    tampered_message = proof.message;
+    tampered_message.commitment_randomness_response += 1;
+    all_passed = ExpectTrue(
+        !zkp.VerifyEncProof(public_key, commitment_key, tampered_message),
+        "VerifyEncProof rejects tampered commitment randomness response") &&
+        all_passed;
+
+    tampered_message = proof.message;
+    tampered_message.encryption_randomness_response += 1;
+    all_passed = ExpectTrue(
+        !zkp.VerifyEncProof(public_key, commitment_key, tampered_message),
+        "VerifyEncProof rejects tampered encryption randomness response") &&
+        all_passed;
+
+    tampered_message = proof.message;
+    tampered_message.random_commitment.value = MulMod(
+        tampered_message.random_commitment.value,
+        commitment_key.h,
+        public_key.N * public_key.N);
+    all_passed = ExpectTrue(
+        !zkp.VerifyEncProof(public_key, commitment_key, tampered_message),
+        "VerifyEncProof rejects a tampered random commitment") &&
+        all_passed;
+
+    tampered_message = proof.message;
+    tampered_message.random_ciphertext.u = MulMod(
+        tampered_message.random_ciphertext.u,
+        public_key.g,
+        public_key.N_zeta_plus_one);
+    all_passed = ExpectTrue(
+        !zkp.VerifyEncProof(public_key, commitment_key, tampered_message),
+        "VerifyEncProof rejects a tampered random ciphertext") &&
+        all_passed;
+
+    tampered_message = proof.message;
+    tampered_message.challenges.pop_back();
+    all_passed = ExpectTrue(
+        !zkp.VerifyEncProof(public_key, commitment_key, tampered_message),
+        "VerifyEncProof rejects an invalid challenge vector size") &&
+        all_passed;
+
+    std::vector<CamenischShoupEnc::Ciphertext> external_ciphertexts =
+        enc.input_ciphertexts;
+    external_ciphertexts[0].u = MulMod(
+        external_ciphertexts[0].u,
+        public_key.g,
+        public_key.N_zeta_plus_one);
+    all_passed = ExpectTrue(
+        !zkp.VerifyEncProof(
+            public_key,
+            commitment_key,
+            external_ciphertexts,
+            enc.input_commitments,
+            proof.message),
+        "External VerifyEncProof binds the supplied ciphertext set") &&
+        all_passed;
 
     const NTL::ZZ beta_q(101);
     const std::vector<NTL::ZZ> beta_a = {
@@ -197,6 +354,287 @@ int main()
             commitment_key,
             tampered_beta_message),
         "BatchBeta rejects a coefficient response not bound to the commitments") && all_passed;
+
+    tampered_beta_message = beta_proof.message;
+    tampered_beta_message.challenges[0] += 1;
+    all_passed = ExpectTrue(
+        !zkp.VerifyBatchBetaProof(
+            public_key,
+            commitment_key,
+            tampered_beta_message),
+        "BatchBeta rejects a tampered challenge") && all_passed;
+
+    tampered_beta_message = beta_proof.message;
+    tampered_beta_message.alpha_responses[0] += 1;
+    all_passed = ExpectTrue(
+        !zkp.VerifyBatchBetaProof(
+            public_key,
+            commitment_key,
+            tampered_beta_message),
+        "BatchBeta rejects a tampered alpha response") && all_passed;
+
+    tampered_beta_message = beta_proof.message;
+    tampered_beta_message.b_responses[0] += 1;
+    all_passed = ExpectTrue(
+        !zkp.VerifyBatchBetaProof(
+            public_key,
+            commitment_key,
+            tampered_beta_message),
+        "BatchBeta rejects a tampered b response") && all_passed;
+
+    tampered_beta_message = beta_proof.message;
+    tampered_beta_message.encryption_randomness_response += 1;
+    all_passed = ExpectTrue(
+        !zkp.VerifyBatchBetaProof(
+            public_key,
+            commitment_key,
+            tampered_beta_message),
+        "BatchBeta rejects a tampered encryption randomness response") &&
+        all_passed;
+
+    tampered_beta_message = beta_proof.message;
+    tampered_beta_message.random_beta_ciphertext.u = MulMod(
+        tampered_beta_message.random_beta_ciphertext.u,
+        public_key.g,
+        public_key.N_zeta_plus_one);
+    all_passed = ExpectTrue(
+        !zkp.VerifyBatchBetaProof(
+            public_key,
+            commitment_key,
+            tampered_beta_message),
+        "BatchBeta rejects a tampered random beta ciphertext") &&
+        all_passed;
+
+    tampered_beta_message = beta_proof.message;
+    tampered_beta_message.a_responses.pop_back();
+    all_passed = ExpectTrue(
+        !zkp.VerifyBatchBetaProof(
+            public_key,
+            commitment_key,
+            tampered_beta_message),
+        "BatchBeta rejects an invalid slot response count") &&
+        all_passed;
+
+    CamenischShoupEncZKP::BatchBetaProof invalid_beta_proof;
+    std::vector<NTL::ZZ> short_beta_a = beta_a;
+    short_beta_a.pop_back();
+    zkp.CreateBatchBetaCiphertextsAndProof(
+        public_key,
+        commitment_key,
+        k2_ciphertext,
+        beta_q,
+        short_beta_a,
+        beta_alpha,
+        beta_b,
+        a_commitment_randomness,
+        alpha_commitment_randomness,
+        b_commitment_randomness,
+        beta_encryption_randomness,
+        invalid_beta_proof);
+    all_passed = ExpectTrue(
+        invalid_beta_proof.message.beta_ciphertexts.empty(),
+        "CreateBatchBetaCiphertextsAndProof rejects mismatched slot inputs") &&
+        all_passed;
+
+    ElGamalEnc elgamal;
+    ElGamalEnc::PublicKey elgamal_public_key;
+    ElGamalEnc::SecretKey elgamal_secret_key;
+    ElGamalEnc::CommitmentKey elgamal_commitment_key;
+    elgamal.GenerateKeys(
+        elgamal_public_key,
+        elgamal_secret_key,
+        elgamal_commitment_key);
+
+    CamenischShoupEncZKP::DecProof dec_proof;
+    zkp.CreateDecProofAndCommitments(
+        public_key,
+        secret_key,
+        commitment_key,
+        elgamal,
+        elgamal_commitment_key,
+        enc.input_ciphertexts,
+        dec_proof);
+
+    all_passed = ExpectEqual(
+        dec_proof.beta,
+        enc.input_plaintexts,
+        "Dec proof stores the decrypted beta set") && all_passed;
+    all_passed = ExpectTrue(
+        dec_proof.message.camenisch_shoup_beta_commitments.size() ==
+            enc.input_ciphertexts.size(),
+        "Dec proof generates one Camenisch-Shoup vector commitment per ciphertext") &&
+        all_passed;
+    all_passed = ExpectTrue(
+        dec_proof.message.elgamal_beta_commitments.size() ==
+            enc.input_plaintexts.size(),
+        "Dec proof generates one ElGamal scalar commitment per beta") &&
+        all_passed;
+    all_passed = ExpectTrue(
+        !dec_proof.elgamal_commitment_randomness.empty() &&
+            dec_proof.elgamal_commitment_randomness[0] != nullptr &&
+            !BN_is_zero(
+                dec_proof.elgamal_commitment_randomness[0].get()) &&
+            BN_cmp(
+                dec_proof.elgamal_commitment_randomness[0].get(),
+                elgamal.Order()) < 0,
+        "ElGamal commitment randomness is a random BIGNUM scalar") &&
+        all_passed;
+    all_passed = ExpectTrue(
+        zkp.VerifyDecProof(
+            public_key,
+            commitment_key,
+            elgamal,
+            elgamal_commitment_key,
+            dec_proof.message),
+        "Dec proof verifies beta decryption and both commitment families") &&
+        all_passed;
+
+    CamenischShoupEncZKP::DecProofMessage tampered_dec_message =
+        dec_proof.message;
+    tampered_dec_message.beta_responses[0] += 1;
+    all_passed = ExpectTrue(
+        !zkp.VerifyDecProof(
+            public_key,
+            commitment_key,
+            elgamal,
+            elgamal_commitment_key,
+            tampered_dec_message),
+        "Dec proof rejects a tampered beta response") && all_passed;
+
+    tampered_dec_message = dec_proof.message;
+    tampered_dec_message.camenisch_shoup_beta_commitments[0].value =
+        MulMod(
+        tampered_dec_message.camenisch_shoup_beta_commitments[0].value,
+        commitment_key.h,
+        public_key.N * public_key.N);
+    all_passed = ExpectTrue(
+        !zkp.VerifyDecProof(
+            public_key,
+            commitment_key,
+            elgamal,
+            elgamal_commitment_key,
+            tampered_dec_message),
+        "Dec proof rejects a tampered Camenisch-Shoup beta commitment") &&
+        all_passed;
+
+    tampered_dec_message = dec_proof.message;
+    tampered_dec_message.elgamal_beta_commitments[0] =
+        dec_proof.message.elgamal_beta_commitments[1];
+    all_passed = ExpectTrue(
+        !zkp.VerifyDecProof(
+            public_key,
+            commitment_key,
+            elgamal,
+            elgamal_commitment_key,
+            tampered_dec_message),
+        "Dec proof rejects a tampered ElGamal beta commitment") && all_passed;
+
+    tampered_dec_message = dec_proof.message;
+    tampered_dec_message.batch_challenges[0] += 1;
+    all_passed = ExpectTrue(
+        !zkp.VerifyDecProof(
+            public_key,
+            commitment_key,
+            elgamal,
+            elgamal_commitment_key,
+            tampered_dec_message),
+        "Dec proof rejects a tampered batch challenge") && all_passed;
+
+    tampered_dec_message = dec_proof.message;
+    tampered_dec_message.final_challenge += 1;
+    all_passed = ExpectTrue(
+        !zkp.VerifyDecProof(
+            public_key,
+            commitment_key,
+            elgamal,
+            elgamal_commitment_key,
+            tampered_dec_message),
+        "Dec proof rejects a tampered final challenge") && all_passed;
+
+    tampered_dec_message = dec_proof.message;
+    tampered_dec_message.secret_key_responses[0] += 1;
+    all_passed = ExpectTrue(
+        !zkp.VerifyDecProof(
+            public_key,
+            commitment_key,
+            elgamal,
+            elgamal_commitment_key,
+            tampered_dec_message),
+        "Dec proof rejects a tampered secret-key response") && all_passed;
+
+    tampered_dec_message = dec_proof.message;
+    tampered_dec_message.decryption_announcements[0] = 0;
+    all_passed = ExpectTrue(
+        !zkp.VerifyDecProof(
+            public_key,
+            commitment_key,
+            elgamal,
+            elgamal_commitment_key,
+            tampered_dec_message),
+        "Dec proof rejects an invalid decryption announcement") && all_passed;
+
+    tampered_dec_message = dec_proof.message;
+    tampered_dec_message.random_ciphertext.u = MulMod(
+        tampered_dec_message.random_ciphertext.u,
+        public_key.g,
+        public_key.N_zeta_plus_one);
+    all_passed = ExpectTrue(
+        !zkp.VerifyDecProof(
+            public_key,
+            commitment_key,
+            elgamal,
+            elgamal_commitment_key,
+            tampered_dec_message),
+        "Dec proof rejects a tampered random ciphertext") && all_passed;
+
+    tampered_dec_message = dec_proof.message;
+    tampered_dec_message.camenisch_shoup_commitment_randomness_response += 1;
+    all_passed = ExpectTrue(
+        !zkp.VerifyDecProof(
+            public_key,
+            commitment_key,
+            elgamal,
+            elgamal_commitment_key,
+            tampered_dec_message),
+        "Dec proof rejects tampered Camenisch-Shoup commitment randomness") &&
+        all_passed;
+
+    tampered_dec_message = dec_proof.message;
+    tampered_dec_message.beta_responses.pop_back();
+    all_passed = ExpectTrue(
+        !zkp.VerifyDecProof(
+            public_key,
+            commitment_key,
+            elgamal,
+            elgamal_commitment_key,
+            tampered_dec_message),
+        "Dec proof rejects an invalid beta response count") && all_passed;
+
+    tampered_dec_message = dec_proof.message;
+    tampered_dec_message.elgamal_commitment_randomness_responses[0].reset();
+    all_passed = ExpectTrue(
+        !zkp.VerifyDecProof(
+            public_key,
+            commitment_key,
+            elgamal,
+            elgamal_commitment_key,
+            tampered_dec_message),
+        "Dec proof rejects a null ElGamal randomness response") && all_passed;
+
+    CamenischShoupEncZKP::DecProof invalid_dec_proof;
+    zkp.CreateDecProofAndCommitments(
+        public_key,
+        secret_key,
+        commitment_key,
+        elgamal,
+        elgamal_commitment_key,
+        std::vector<CamenischShoupEnc::Ciphertext>{},
+        invalid_dec_proof);
+    all_passed = ExpectTrue(
+        invalid_dec_proof.message.ciphertexts.empty() &&
+            invalid_dec_proof.beta.empty(),
+        "CreateDecProofAndCommitments rejects an empty ciphertext set") &&
+        all_passed;
 
     if (!all_passed)
     {

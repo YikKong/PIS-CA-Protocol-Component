@@ -185,6 +185,7 @@
         "PIS-CA Refactor/tests/camenisch_shoup_enc_zkp_test.cpp",
         "PIS-CA Refactor/CamenischShoup/CamenischShoupEnc.cpp",
         "PIS-CA Refactor/CamenischShoup/CamenischShoupEncZKP.cpp",
+        "PIS-CA Refactor/ElGamal/ElGamalEnc.cpp",
         "-std=c++17",
         "-O2",
         "-Wall",
