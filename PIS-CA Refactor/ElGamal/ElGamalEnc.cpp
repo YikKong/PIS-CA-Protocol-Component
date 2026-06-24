@@ -239,6 +239,52 @@ ElGamalEnc::Commitment::~Commitment()
     EC_POINT_free(value);
 }
 
+ElGamalEnc::GroupElement::GroupElement(const GroupElement& other)
+    : group(other.group), value(DuplicatePoint(other.group, other.value))
+{
+}
+
+ElGamalEnc::GroupElement& ElGamalEnc::GroupElement::operator=(
+    const GroupElement& other)
+{
+    if (this == &other)
+    {
+        return *this;
+    }
+    EC_POINT* new_value = DuplicatePoint(other.group, other.value);
+    EC_POINT_free(value);
+    group = other.group;
+    value = new_value;
+    return *this;
+}
+
+ElGamalEnc::GroupElement::GroupElement(GroupElement&& other) noexcept
+    : group(other.group), value(other.value)
+{
+    other.group = nullptr;
+    other.value = nullptr;
+}
+
+ElGamalEnc::GroupElement& ElGamalEnc::GroupElement::operator=(
+    GroupElement&& other) noexcept
+{
+    if (this == &other)
+    {
+        return *this;
+    }
+    EC_POINT_free(value);
+    group = other.group;
+    value = other.value;
+    other.group = nullptr;
+    other.value = nullptr;
+    return *this;
+}
+
+ElGamalEnc::GroupElement::~GroupElement()
+{
+    EC_POINT_free(value);
+}
+
 ElGamalEnc::Ciphertext::Ciphertext(const Ciphertext& other)
     : group(other.group),
       u(DuplicatePoint(other.group, other.u)),
@@ -785,6 +831,14 @@ bool ElGamalEnc::IsValidCommitment(const Commitment& commitment) const
         commitment.value != nullptr &&
         EC_POINT_is_on_curve(group_, commitment.value, bn_ctx_) == 1 &&
         EC_POINT_is_at_infinity(group_, commitment.value) == 0;
+}
+
+bool ElGamalEnc::IsValidGroupElement(const GroupElement& element) const
+{
+    return element.group == group_ &&
+        element.value != nullptr &&
+        EC_POINT_is_on_curve(group_, element.value, bn_ctx_) == 1 &&
+        EC_POINT_is_at_infinity(group_, element.value) == 0;
 }
 
 bool ElGamalEnc::IsValidCiphertext(const Ciphertext& ciphertext) const

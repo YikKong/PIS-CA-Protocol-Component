@@ -75,6 +75,19 @@ public:
         ~Commitment();
     };
 
+    struct GroupElement
+    {
+        const EC_GROUP* group = nullptr;
+        EC_POINT* value = nullptr;
+
+        GroupElement() = default;
+        GroupElement(const GroupElement& other);
+        GroupElement& operator=(const GroupElement& other);
+        GroupElement(GroupElement&& other) noexcept;
+        GroupElement& operator=(GroupElement&& other) noexcept;
+        ~GroupElement();
+    };
+
     struct Ciphertext
     {
         const EC_GROUP* group = nullptr;
@@ -161,6 +174,7 @@ public:
     bool IsValidPublicKey(const PublicKey& public_key) const;
     bool IsValidCommitmentKey(const CommitmentKey& commitment_key) const;
     bool IsValidCommitment(const Commitment& commitment) const;
+    bool IsValidGroupElement(const GroupElement& element) const;
     bool IsValidCiphertext(const Ciphertext& ciphertext) const;
     bool PointsEqual(const EC_POINT* left, const EC_POINT* right) const;
 

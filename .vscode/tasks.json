@@ -15,57 +15,14 @@
       "problemMatcher": []
     },
     {
-      "label": "build all smoke tests",
-      "dependsOn": [
-        "build camenisch shoup enc test",
-        "build camenisch shoup enc zkp test",
-        "build elgamal enc test",
-        "build elgamal enc zkp test"
-      ],
-      "dependsOrder": "sequence",
-      "group": {
-        "kind": "build",
-        "isDefault": false
-      },
-      "problemMatcher": []
-    },
-    // {
-    //   "label": "build openssl smoke test",
-    //   "type": "shell",
-    //   "command": "Z:/MSY2/ucrt64/bin/g++.exe",
-    //   "args": [
-    //     "PIS-CA Refactor/tests/openssl_smoke_test.cpp",
-    //     "-std=c++17",
-    //     "-O2",
-    //     "-Wall",
-    //     "-Wextra",
-    //     "-I",
-    //     "Z:/MSY2/ucrt64/include",
-    //     "-L",
-    //     "Z:/MSY2/ucrt64/lib",
-    //     "-o",
-    //     "build/openssl_smoke_test.exe",
-    //     "-lssl",
-    //     "-lcrypto"
-    //   ],
-    //   "options": {
-    //     "cwd": "${workspaceFolder}",
-    //     "env": {
-    //       "PATH": "Z:/MSY2/ucrt64/bin;${env:PATH}"
-    //     }
-    //   },
-    //   "dependsOn": "make build dir",
-    //   "problemMatcher": ["$gcc"]
-    // },
-    {
-      "label": "build camenisch shoup enc test",
+      "label": "build elgamal enc test",
       "type": "shell",
       "command": "Z:/MSY2/ucrt64/bin/g++.exe",
       "args": [
-        "PIS-CA Refactor/tests/camenisch_shoup_enc_test.cpp",
-        "PIS-CA Refactor/CamenischShoup/CamenischShoupEnc.cpp",
+        "PIS-CA Refactor/tests/elgamal_enc_test.cpp",
+        "PIS-CA Refactor/ElGamal/ElGamalEnc.cpp",
         "-std=c++17",
-        "-O2",
+        "-O0",
         "-Wall",
         "-Wextra",
         "-I",
@@ -73,9 +30,7 @@
         "-L",
         "Z:/MSY2/ucrt64/lib",
         "-o",
-        "build/camenisch_shoup_enc_test.exe",
-        "-lntl",
-        "-lgmp",
+        "build/elgamal_enc_test.exe",
         "-lssl",
         "-lcrypto"
       ],
@@ -88,94 +43,18 @@
       "dependsOn": "make build dir",
       "problemMatcher": ["$gcc"]
     },
-    // {
-    //   "label": "build ntl smoke test",
-    //   "type": "shell",
-    //   "command": "Z:/MSY2/ucrt64/bin/g++.exe",
-    //   "args": [
-    //     "PIS-CA Refactor/tests/ntl_smoke_test.cpp",
-    //     "-std=c++17",
-    //     "-O2",
-    //     "-Wall",
-    //     "-Wextra",
-    //     "-I",
-    //     "Z:/MSY2/ucrt64/include",
-    //     "-L",
-    //     "Z:/MSY2/ucrt64/lib",
-    //     "-o",
-    //     "build/ntl_smoke_test.exe",
-    //     "-lntl",
-    //     "-lgmp"
-    //   ],
-    //   "options": {
-    //     "cwd": "${workspaceFolder}",
-    //     "env": {
-    //       "PATH": "Z:/MSY2/ucrt64/bin;${env:PATH}"
-    //     }
-    //   },
-    //   "dependsOn": "make build dir",
-    //   "problemMatcher": ["$gcc"]
-    // },
     {
-      "label": "build elgamal enc test",
-      "type": "process",
-      "command": "Z:/MSY2/ucrt64/bin/g++.exe",
-      "args": [
-        "${workspaceFolder}/PIS-CA Refactor/tests/elgamal_enc_test.cpp",
-        "${workspaceFolder}/PIS-CA Refactor/ElGamal/ElGamalEnc.cpp",
-        "-std=c++17",
-        "-O0",
-        "-Wall",
-        "-Wextra",
-        "-I",
-        "Z:/MSY2/ucrt64/include",
-        "-L",
-        "Z:/MSY2/ucrt64/lib",
-        "-o",
-        "${workspaceFolder}/build/elgamal_enc_test.exe",
-        "-lcrypto"
-      ],
+      "label": "run elgamal enc test",
+      "type": "shell",
+      "command": "build/elgamal_enc_test.exe",
       "options": {
         "cwd": "${workspaceFolder}",
         "env": {
           "PATH": "Z:/MSY2/ucrt64/bin;${env:PATH}"
         }
       },
-      "dependsOn": "make build dir",
-      "group": {
-        "kind": "build",
-        "isDefault": true
-      },
-      "problemMatcher": ["$gcc"]
-    },
-    {
-      "label": "build elgamal enc zkp test",
-      "type": "process",
-      "command": "Z:/MSY2/ucrt64/bin/g++.exe",
-      "args": [
-        "${workspaceFolder}/PIS-CA Refactor/tests/elgamal_enc_zkp_test.cpp",
-        "${workspaceFolder}/PIS-CA Refactor/ElGamal/ElGamalEnc.cpp",
-        "${workspaceFolder}/PIS-CA Refactor/ElGamal/ElGamalEncZKP.cpp",
-        "-std=c++17",
-        "-O0",
-        "-Wall",
-        "-Wextra",
-        "-I",
-        "Z:/MSY2/ucrt64/include",
-        "-L",
-        "Z:/MSY2/ucrt64/lib",
-        "-o",
-        "${workspaceFolder}/build/elgamal_enc_zkp_test.exe",
-        "-lcrypto"
-      ],
-      "options": {
-        "cwd": "${workspaceFolder}",
-        "env": {
-          "PATH": "Z:/MSY2/ucrt64/bin;${env:PATH}"
-        }
-      },
-      "dependsOn": "make build dir",
-      "problemMatcher": ["$gcc"]
+      "dependsOn": "build elgamal enc test",
+      "problemMatcher": []
     },
     {
       "label": "build camenisch shoup enc zkp test",
@@ -187,7 +66,7 @@
         "PIS-CA Refactor/CamenischShoup/CamenischShoupEncZKP.cpp",
         "PIS-CA Refactor/ElGamal/ElGamalEnc.cpp",
         "-std=c++17",
-        "-O2",
+        "-O0",
         "-Wall",
         "-Wextra",
         "-I",
@@ -210,45 +89,6 @@
       "dependsOn": "make build dir",
       "problemMatcher": ["$gcc"]
     },
-    // {
-    //   "label": "run openssl smoke test",
-    //   "type": "shell",
-    //   "command": "build/openssl_smoke_test.exe",
-    //   "options": {
-    //     "cwd": "${workspaceFolder}",
-    //     "env": {
-    //       "PATH": "Z:/MSY2/ucrt64/bin;${env:PATH}"
-    //     }
-    //   },
-    //   "dependsOn": "build openssl smoke test",
-    //   "problemMatcher": []
-    // },
-    {
-      "label": "run camenisch shoup enc test",
-      "type": "shell",
-      "command": "build/camenisch_shoup_enc_test.exe",
-      "options": {
-        "cwd": "${workspaceFolder}",
-        "env": {
-          "PATH": "Z:/MSY2/ucrt64/bin;${env:PATH}"
-        }
-      },
-      "dependsOn": "build camenisch shoup enc test",
-      "problemMatcher": []
-    },
-    {
-      "label": "run elgamal enc test",
-      "type": "shell",
-      "command": "build/elgamal_enc_test.exe",
-      "options": {
-        "cwd": "${workspaceFolder}",
-        "env": {
-          "PATH": "Z:/MSY2/ucrt64/bin;${env:PATH}"
-        }
-      },
-      "dependsOn": "build elgamal enc test",
-      "problemMatcher": []
-    },
     {
       "label": "run camenisch shoup enc zkp test",
       "type": "shell",
@@ -262,41 +102,26 @@
       "dependsOn": "build camenisch shoup enc zkp test",
       "problemMatcher": []
     },
-    // {
-    //   "label": "run ntl smoke test",
-    //   "type": "shell",
-    //   "command": "build/ntl_smoke_test.exe",
-    //   "options": {
-    //     "cwd": "${workspaceFolder}",
-    //     "env": {
-    //       "PATH": "Z:/MSY2/ucrt64/bin;${env:PATH}"
-    //     }
-    //   },
-    //   "dependsOn": "build ntl smoke test",
-    //   "problemMatcher": []
-    // },
     {
-      "label": "run all smoke tests",
-      "dependsOn": [
-        "run camenisch shoup enc test",
-        "run camenisch shoup enc zkp test",
-        "run elgamal enc test",
-        "run elgamal enc zkp test"
-      ],
+      "label": "build crypto tests",
       "dependsOrder": "sequence",
+      "dependsOn": [
+        "build elgamal enc test",
+        "build camenisch shoup enc zkp test"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
       "problemMatcher": []
     },
     {
-      "label": "run elgamal enc zkp test",
-      "type": "shell",
-      "command": "build/elgamal_enc_zkp_test.exe",
-      "options": {
-        "cwd": "${workspaceFolder}",
-        "env": {
-          "PATH": "Z:/MSY2/ucrt64/bin;${env:PATH}"
-        }
-      },
-      "dependsOn": "build elgamal enc zkp test",
+      "label": "run crypto tests",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "run elgamal enc test",
+        "run camenisch shoup enc zkp test"
+      ],
       "problemMatcher": []
     }
   ]

@@ -105,10 +105,12 @@ public:
         std::vector<Commitment> alpha_commitments;
         std::vector<Commitment> b_commitments;
         std::vector<Ciphertext> beta_ciphertexts;
+        std::vector<ElGamalEnc::GroupElement> g_to_a_values;
         Commitment random_a_commitment;
         Commitment random_alpha_commitment;
         Commitment random_b_commitment;
         Ciphertext random_beta_ciphertext;
+        std::vector<ElGamalEnc::GroupElement> random_g_to_a_values;
         std::vector<NTL::ZZ> challenges;
 
         // One aggregated response per packed plaintext slot.
@@ -154,9 +156,32 @@ public:
         const std::vector<NTL::ZZ>& encryption_randomness,
         BatchBetaProof& proof) const;
 
+    void CreateBatchBetaCiphertextsAndProof(
+        const PublicKey& public_key,
+        const CommitmentKey& commitment_key,
+        const ElGamalEnc& elgamal,
+        const ElGamalEnc::PublicKey& elgamal_public_key,
+        const Ciphertext& base_ciphertext,
+        const NTL::ZZ& q,
+        const std::vector<NTL::ZZ>& a,
+        const std::vector<NTL::ZZ>& alpha,
+        const std::vector<NTL::ZZ>& b,
+        const std::vector<NTL::ZZ>& a_commitment_randomness,
+        const std::vector<NTL::ZZ>& alpha_commitment_randomness,
+        const std::vector<NTL::ZZ>& b_commitment_randomness,
+        const std::vector<NTL::ZZ>& encryption_randomness,
+        BatchBetaProof& proof) const;
+
     bool VerifyBatchBetaProof(
         const PublicKey& public_key,
         const CommitmentKey& commitment_key,
+        const BatchBetaProofMessage& proof_message) const;
+
+    bool VerifyBatchBetaProof(
+        const PublicKey& public_key,
+        const CommitmentKey& commitment_key,
+        const ElGamalEnc& elgamal,
+        const ElGamalEnc::PublicKey& elgamal_public_key,
         const BatchBetaProofMessage& proof_message) const;
 
     struct DecProofMessage

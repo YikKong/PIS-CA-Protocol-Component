@@ -155,6 +155,13 @@ int main()
         "GenerateRandomGroupElement returns a nonzero target-subgroup point") &&
         all_passed;
 
+    ElGamalEnc::GroupElement group_element;
+    group_element.group = enc.Group();
+    group_element.value = EC_POINT_dup(random_group_element.get(), enc.Group());
+    all_passed = ExpectTrue(
+        enc.IsValidGroupElement(group_element),
+        "GroupElement wraps a valid nonzero curve point") && all_passed;
+
     BnPtr seven = MakeScalar(7);
     BnPtr eleven = MakeScalar(11);
     BnPtr three = MakeScalar(3);
@@ -360,39 +367,49 @@ int main()
     ElGamalEnc::SecretKey secret_key_copy(secret_key);
     ElGamalEnc::CommitmentKey commitment_key_copy(commitment_key);
     ElGamalEnc::Commitment commitment_copy(commitment);
+    ElGamalEnc::GroupElement group_element_copy(group_element);
     ElGamalEnc::Ciphertext ciphertext_copy(first_ciphertext);
     all_passed = ExpectTrue(
         enc.IsValidPublicKey(public_key_copy) &&
             BN_cmp(secret_key_copy.sk, secret_key.sk) == 0 &&
             enc.IsValidCommitmentKey(commitment_key_copy) &&
             enc.PointsEqual(commitment_copy.value, commitment.value) &&
+            enc.IsValidGroupElement(group_element_copy) &&
+            enc.PointsEqual(group_element_copy.value, group_element.value) &&
             CiphertextsEqual(enc, ciphertext_copy, first_ciphertext) &&
             public_key_copy.g != public_key.g &&
             public_key_copy.pk != public_key.pk &&
             secret_key_copy.sk != secret_key.sk &&
             commitment_key_copy.g != commitment_key.g &&
             commitment_copy.value != commitment.value &&
+            group_element_copy.value != group_element.value &&
             ciphertext_copy.u != first_ciphertext.u,
-        "key, commitment, and ciphertext copy constructors are deep copies") &&
+        "key, commitment, group element, and ciphertext copy constructors are deep copies") &&
         all_passed;
 
     ElGamalEnc::PublicKey assigned_public_key;
     ElGamalEnc::SecretKey assigned_secret_key;
     ElGamalEnc::CommitmentKey assigned_commitment_key;
     ElGamalEnc::Commitment assigned_commitment;
+    ElGamalEnc::GroupElement assigned_group_element;
     ElGamalEnc::Ciphertext assigned_ciphertext;
     assigned_public_key = public_key;
     assigned_secret_key = secret_key;
     assigned_commitment_key = commitment_key;
     assigned_commitment = commitment;
+    assigned_group_element = group_element;
     assigned_ciphertext = first_ciphertext;
     all_passed = ExpectTrue(
         enc.IsValidPublicKey(assigned_public_key) &&
             BN_cmp(assigned_secret_key.sk, secret_key.sk) == 0 &&
             enc.IsValidCommitmentKey(assigned_commitment_key) &&
             enc.PointsEqual(assigned_commitment.value, commitment.value) &&
+            enc.IsValidGroupElement(assigned_group_element) &&
+            enc.PointsEqual(
+                assigned_group_element.value,
+                group_element.value) &&
             CiphertextsEqual(enc, assigned_ciphertext, first_ciphertext),
-        "key, commitment, and ciphertext copy assignments preserve values") &&
+        "key, commitment, group element, and ciphertext copy assignments preserve values") &&
         all_passed;
 
     ElGamalEnc::PublicKey moved_public_key(std::move(public_key_copy));
@@ -400,12 +417,15 @@ int main()
     ElGamalEnc::CommitmentKey moved_commitment_key(
         std::move(commitment_key_copy));
     ElGamalEnc::Commitment moved_commitment(std::move(commitment_copy));
+    ElGamalEnc::GroupElement moved_group_element(
+        std::move(group_element_copy));
     ElGamalEnc::Ciphertext moved_ciphertext(std::move(ciphertext_copy));
     all_passed = ExpectTrue(
         enc.IsValidPublicKey(moved_public_key) &&
             moved_secret_key.sk != nullptr &&
             enc.IsValidCommitmentKey(moved_commitment_key) &&
             enc.IsValidCommitment(moved_commitment) &&
+            enc.IsValidGroupElement(moved_group_element) &&
             enc.IsValidCiphertext(moved_ciphertext) &&
             public_key_copy.generator == nullptr &&
             public_key_copy.g == nullptr &&
@@ -414,15 +434,17 @@ int main()
             commitment_key_copy.g == nullptr &&
             commitment_key_copy.h == nullptr &&
             commitment_copy.value == nullptr &&
+            group_element_copy.value == nullptr &&
             ciphertext_copy.u == nullptr &&
             ciphertext_copy.e == nullptr,
-        "key, commitment, and ciphertext move constructors transfer ownership") &&
+        "key, commitment, group element, and ciphertext move constructors transfer ownership") &&
         all_passed;
 
     all_passed = ExpectTrue(
         !enc.IsValidPublicKey(ElGamalEnc::PublicKey{}) &&
             !enc.IsValidCommitmentKey(ElGamalEnc::CommitmentKey{}) &&
             !enc.IsValidCommitment(ElGamalEnc::Commitment{}) &&
+            !enc.IsValidGroupElement(ElGamalEnc::GroupElement{}) &&
             !enc.IsValidCiphertext(ElGamalEnc::Ciphertext{}) &&
             !enc.PointsEqual(nullptr, seven_point.get()) &&
             !enc.PointsEqual(seven_point.get(), nullptr),

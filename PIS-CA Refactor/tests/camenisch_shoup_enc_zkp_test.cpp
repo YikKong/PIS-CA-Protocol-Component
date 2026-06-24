@@ -297,6 +297,15 @@ int main()
         k2_encryption_randomness,
         k2_ciphertext);
 
+    ElGamalEnc elgamal;
+    ElGamalEnc::PublicKey elgamal_public_key;
+    ElGamalEnc::SecretKey elgamal_secret_key;
+    ElGamalEnc::CommitmentKey elgamal_commitment_key;
+    elgamal.GenerateKeys(
+        elgamal_public_key,
+        elgamal_secret_key,
+        elgamal_commitment_key);
+
     CamenischShoupEncZKP::BatchBetaProof beta_proof;
     zkp.CreateBatchBetaCiphertextsAndProof(
         public_key,
@@ -436,14 +445,63 @@ int main()
         "CreateBatchBetaCiphertextsAndProof rejects mismatched slot inputs") &&
         all_passed;
 
-    ElGamalEnc elgamal;
-    ElGamalEnc::PublicKey elgamal_public_key;
-    ElGamalEnc::SecretKey elgamal_secret_key;
-    ElGamalEnc::CommitmentKey elgamal_commitment_key;
-    elgamal.GenerateKeys(
+    CamenischShoupEncZKP::BatchBetaProof beta_proof_with_g;
+    zkp.CreateBatchBetaCiphertextsAndProof(
+        public_key,
+        commitment_key,
+        elgamal,
         elgamal_public_key,
-        elgamal_secret_key,
-        elgamal_commitment_key);
+        k2_ciphertext,
+        beta_q,
+        beta_a,
+        beta_alpha,
+        beta_b,
+        a_commitment_randomness,
+        alpha_commitment_randomness,
+        b_commitment_randomness,
+        beta_encryption_randomness,
+        beta_proof_with_g);
+    all_passed = ExpectTrue(
+        beta_proof_with_g.message.g_to_a_values.size() ==
+            beta_a.size() &&
+            beta_proof_with_g.message.random_g_to_a_values.size() ==
+                CamenischShoupEnc::PlaintextValuesPerCiphertext,
+        "BatchBeta with ElGamal carries one g^a value per slot") &&
+        all_passed;
+    all_passed = ExpectTrue(
+        zkp.VerifyBatchBetaProof(
+            public_key,
+            commitment_key,
+            elgamal,
+            elgamal_public_key,
+            beta_proof_with_g.message),
+        "BatchBeta with ElGamal verifies g^a values against the same a witness") &&
+        all_passed;
+
+    tampered_beta_message = beta_proof_with_g.message;
+    tampered_beta_message.g_to_a_values[0] =
+        beta_proof_with_g.message.g_to_a_values[1];
+    all_passed = ExpectTrue(
+        !zkp.VerifyBatchBetaProof(
+            public_key,
+            commitment_key,
+            elgamal,
+            elgamal_public_key,
+            tampered_beta_message),
+        "BatchBeta with ElGamal rejects a tampered g^a value") &&
+        all_passed;
+
+    tampered_beta_message = beta_proof_with_g.message;
+    tampered_beta_message.g_to_a_values.pop_back();
+    all_passed = ExpectTrue(
+        !zkp.VerifyBatchBetaProof(
+            public_key,
+            commitment_key,
+            elgamal,
+            elgamal_public_key,
+            tampered_beta_message),
+        "BatchBeta with ElGamal rejects a missing g^a value") &&
+        all_passed;
 
     CamenischShoupEncZKP::DecProof dec_proof;
     zkp.CreateDecProofAndCommitments(
