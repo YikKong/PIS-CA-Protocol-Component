@@ -65,6 +65,16 @@ public:
         const std::vector<Commitment>& commitments,
         Proof& proof) const;
 
+    void CreateEncProofWithRepeatedCommitment(
+        const PublicKey& public_key,
+        const CommitmentKey& commitment_key,
+        const NTL::ZZ& plaintext,
+        const Ciphertext& ciphertext,
+        const NTL::ZZ& encryption_randomness,
+        const NTL::ZZ& commitment_randomness,
+        const Commitment& commitment,
+        Proof& proof) const;
+
     void CreateEncProofMessage(
         const PublicKey& public_key,
         const CommitmentKey& commitment_key,
@@ -95,6 +105,13 @@ public:
         const CommitmentKey& commitment_key,
         const std::vector<Ciphertext>& ciphertexts,
         const std::vector<Commitment>& commitments,
+        const ProofMessage& proof_message) const;
+
+    bool VerifyEncProofWithRepeatedCommitment(
+        const PublicKey& public_key,
+        const CommitmentKey& commitment_key,
+        const Ciphertext& ciphertext,
+        const Commitment& commitment,
         const ProofMessage& proof_message) const;
 
     struct BatchBetaProofMessage

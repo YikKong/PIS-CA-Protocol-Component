@@ -271,6 +271,191 @@ int main()
         "External VerifyEncProof binds the supplied ciphertext set") &&
         all_passed;
 
+    const NTL::ZZ repeated_k(123);
+    CamenischShoupEnc::Ciphertext repeated_k_ciphertext;
+    NTL::ZZ repeated_k_encryption_randomness;
+    enc.Encrypt(
+        public_key,
+        std::vector<NTL::ZZ>{repeated_k},
+        repeated_k_encryption_randomness,
+        repeated_k_ciphertext);
+
+    std::vector<NTL::ZZ> repeated_k_commitment_plaintext(
+        CamenischShoupEnc::PlaintextValuesPerCiphertext,
+        repeated_k);
+    CamenischShoupEnc::Commitment repeated_k_commitment;
+    NTL::ZZ repeated_k_commitment_randomness;
+    enc.GenerateCommitment(
+        public_key,
+        commitment_key,
+        repeated_k_commitment_plaintext,
+        repeated_k_commitment_randomness,
+        repeated_k_commitment);
+
+    CamenischShoupEncZKP::Proof repeated_commitment_proof;
+    zkp.CreateEncProofWithRepeatedCommitment(
+        public_key,
+        commitment_key,
+        repeated_k,
+        repeated_k_ciphertext,
+        repeated_k_encryption_randomness,
+        repeated_k_commitment_randomness,
+        repeated_k_commitment,
+        repeated_commitment_proof);
+
+    all_passed = ExpectTrue(
+        repeated_commitment_proof.plaintexts ==
+                std::vector<NTL::ZZ>{repeated_k} &&
+            repeated_commitment_proof.message.challenges.size() == 1 &&
+            repeated_commitment_proof.message.plaintext_randomness_responses.size() == 1 &&
+            repeated_commitment_proof.message.random_ciphertext.e.size() ==
+                CamenischShoupEnc::CiphertextEComponentCount &&
+            repeated_commitment_proof.message.random_commitment.value > 0,
+        "Repeated-commitment proof stores one scalar response for k") &&
+        all_passed;
+    all_passed = ExpectTrue(
+        zkp.VerifyEncProofWithRepeatedCommitment(
+            public_key,
+            commitment_key,
+            repeated_k_ciphertext,
+            repeated_k_commitment,
+            repeated_commitment_proof.message),
+        "Repeated-commitment proof verifies Enc([k]) against Com([k,...,k])") &&
+        all_passed;
+    all_passed = ExpectTrue(
+        !zkp.VerifyEncProof(
+            public_key,
+            commitment_key,
+            repeated_commitment_proof.message),
+        "Generic Enc proof rejects repeated-commitment proof shape") &&
+        all_passed;
+
+    CamenischShoupEnc::Commitment scalar_k_commitment;
+    NTL::ZZ scalar_k_commitment_randomness;
+    enc.GenerateCommitment(
+        public_key,
+        commitment_key,
+        std::vector<NTL::ZZ>{repeated_k},
+        scalar_k_commitment_randomness,
+        scalar_k_commitment);
+    all_passed = ExpectTrue(
+        !zkp.VerifyEncProofWithRepeatedCommitment(
+            public_key,
+            commitment_key,
+            repeated_k_ciphertext,
+            scalar_k_commitment,
+            repeated_commitment_proof.message),
+        "Repeated-commitment proof rejects a scalar-slot commitment") &&
+        all_passed;
+
+    CamenischShoupEnc::Ciphertext wrong_repeated_k_ciphertext;
+    NTL::ZZ wrong_repeated_k_encryption_randomness;
+    enc.Encrypt(
+        public_key,
+        std::vector<NTL::ZZ>{repeated_k + 1},
+        wrong_repeated_k_encryption_randomness,
+        wrong_repeated_k_ciphertext);
+    all_passed = ExpectTrue(
+        !zkp.VerifyEncProofWithRepeatedCommitment(
+            public_key,
+            commitment_key,
+            wrong_repeated_k_ciphertext,
+            repeated_k_commitment,
+            repeated_commitment_proof.message),
+        "Repeated-commitment proof binds the supplied ciphertext") &&
+        all_passed;
+
+    CamenischShoupEncZKP::ProofMessage tampered_repeated_message =
+        repeated_commitment_proof.message;
+    tampered_repeated_message.plaintext_randomness_responses[0] += 1;
+    all_passed = ExpectTrue(
+        !zkp.VerifyEncProofWithRepeatedCommitment(
+            public_key,
+            commitment_key,
+            repeated_k_ciphertext,
+            repeated_k_commitment,
+            tampered_repeated_message),
+        "Repeated-commitment proof rejects tampered plaintext response") &&
+        all_passed;
+
+    tampered_repeated_message = repeated_commitment_proof.message;
+    tampered_repeated_message.commitment_randomness_response += 1;
+    all_passed = ExpectTrue(
+        !zkp.VerifyEncProofWithRepeatedCommitment(
+            public_key,
+            commitment_key,
+            repeated_k_ciphertext,
+            repeated_k_commitment,
+            tampered_repeated_message),
+        "Repeated-commitment proof rejects tampered commitment randomness response") &&
+        all_passed;
+
+    tampered_repeated_message = repeated_commitment_proof.message;
+    tampered_repeated_message.encryption_randomness_response += 1;
+    all_passed = ExpectTrue(
+        !zkp.VerifyEncProofWithRepeatedCommitment(
+            public_key,
+            commitment_key,
+            repeated_k_ciphertext,
+            repeated_k_commitment,
+            tampered_repeated_message),
+        "Repeated-commitment proof rejects tampered encryption randomness response") &&
+        all_passed;
+
+    tampered_repeated_message = repeated_commitment_proof.message;
+    tampered_repeated_message.challenges[0] += 1;
+    all_passed = ExpectTrue(
+        !zkp.VerifyEncProofWithRepeatedCommitment(
+            public_key,
+            commitment_key,
+            repeated_k_ciphertext,
+            repeated_k_commitment,
+            tampered_repeated_message),
+        "Repeated-commitment proof rejects a tampered Fiat-Shamir challenge") &&
+        all_passed;
+
+    tampered_repeated_message = repeated_commitment_proof.message;
+    tampered_repeated_message.random_commitment.value = MulMod(
+        tampered_repeated_message.random_commitment.value,
+        commitment_key.h,
+        public_key.N * public_key.N);
+    all_passed = ExpectTrue(
+        !zkp.VerifyEncProofWithRepeatedCommitment(
+            public_key,
+            commitment_key,
+            repeated_k_ciphertext,
+            repeated_k_commitment,
+            tampered_repeated_message),
+        "Repeated-commitment proof rejects a tampered random commitment") &&
+        all_passed;
+
+    tampered_repeated_message = repeated_commitment_proof.message;
+    tampered_repeated_message.random_ciphertext.u = MulMod(
+        tampered_repeated_message.random_ciphertext.u,
+        public_key.g,
+        public_key.N_zeta_plus_one);
+    all_passed = ExpectTrue(
+        !zkp.VerifyEncProofWithRepeatedCommitment(
+            public_key,
+            commitment_key,
+            repeated_k_ciphertext,
+            repeated_k_commitment,
+            tampered_repeated_message),
+        "Repeated-commitment proof rejects a tampered random ciphertext") &&
+        all_passed;
+
+    tampered_repeated_message = repeated_commitment_proof.message;
+    tampered_repeated_message.plaintext_randomness_responses.emplace_back(NTL::ZZ(1));
+    all_passed = ExpectTrue(
+        !zkp.VerifyEncProofWithRepeatedCommitment(
+            public_key,
+            commitment_key,
+            repeated_k_ciphertext,
+            repeated_k_commitment,
+            tampered_repeated_message),
+        "Repeated-commitment proof rejects an invalid response vector size") &&
+        all_passed;
+
     const NTL::ZZ beta_q(101);
     const std::vector<NTL::ZZ> beta_a = {
         NTL::ZZ(2), NTL::ZZ(3), NTL::ZZ(5), NTL::ZZ(7),

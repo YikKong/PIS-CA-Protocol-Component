@@ -75,6 +75,18 @@ namespace
         }
     }
 
+    std::vector<NTL::ZZ> ScalarPlaintext(const NTL::ZZ& value)
+    {
+        return std::vector<NTL::ZZ>{value};
+    }
+
+    std::vector<NTL::ZZ> RepeatedSlotPlaintext(const NTL::ZZ& value)
+    {
+        return std::vector<NTL::ZZ>(
+            CamenischShoupEnc::PlaintextValuesPerCiphertext,
+            value);
+    }
+
     struct BNDeleter
     {
         void operator()(BIGNUM* value) const
@@ -522,6 +534,67 @@ void CamenischShoupEncZKP::CreateEncProof(
     }
 }
 
+void CamenischShoupEncZKP::CreateEncProofWithRepeatedCommitment(
+    const PublicKey& public_key,
+    const CommitmentKey& commitment_key,
+    const NTL::ZZ& plaintext,
+    const Ciphertext& ciphertext,
+    const NTL::ZZ& encryption_randomness,
+    const NTL::ZZ& commitment_randomness,
+    const Commitment& commitment,
+    Proof& proof) const
+{
+    proof = Proof{};
+    proof.plaintexts = ScalarPlaintext(plaintext);
+    proof.ciphertexts = std::vector<Ciphertext>{ciphertext};
+    proof.encryption_randomness = std::vector<NTL::ZZ>{encryption_randomness};
+    proof.commitment_randomness = std::vector<NTL::ZZ>{commitment_randomness};
+    proof.commitments = std::vector<Commitment>{commitment};
+
+    if (!HasExpectedSizes(public_key, commitment_key, proof.ciphertexts, proof.commitments))
+    {
+        std::cout << "repeated commitment proof input size error " << std::endl;
+        return;
+    }
+
+    NTL::ZZ plaintext_mask;
+    RandomBits(plaintext_mask, CamenischShoupEnc::SubPlaintextLens - 10);
+    proof.plaintext_randomness = ScalarPlaintext(plaintext_mask);
+
+    RandomBits(proof.encryption_randomness_mask, NumBits(public_key.N) - 10);
+    RandomBits(proof.commitment_randomness_mask, NumBits(public_key.N) - 10);
+
+    proof.message.ciphertexts = proof.ciphertexts;
+    proof.message.commitments = proof.commitments;
+    encryption_.EncryptWithRandomness(
+        public_key,
+        ScalarPlaintext(plaintext_mask),
+        proof.encryption_randomness_mask,
+        proof.message.random_ciphertext);
+    encryption_.GenerateCommitmentWithRandomness(
+        public_key,
+        commitment_key,
+        RepeatedSlotPlaintext(plaintext_mask),
+        proof.commitment_randomness_mask,
+        proof.message.random_commitment);
+
+    GenerateChallenges(
+        public_key,
+        proof.message.ciphertexts,
+        proof.message.commitments,
+        proof.message.random_ciphertext,
+        proof.message.random_commitment,
+        proof.message.challenges);
+
+    const NTL::ZZ& challenge = proof.message.challenges[0];
+    proof.message.plaintext_randomness_responses =
+        ScalarPlaintext(plaintext_mask + challenge * plaintext);
+    proof.message.commitment_randomness_response =
+        proof.commitment_randomness_mask + challenge * commitment_randomness;
+    proof.message.encryption_randomness_response =
+        proof.encryption_randomness_mask + challenge * encryption_randomness;
+}
+
 void CamenischShoupEncZKP::CreateEncProofMessage(
     const PublicKey& public_key,
     const CommitmentKey& commitment_key,
@@ -727,6 +800,106 @@ bool CamenischShoupEncZKP::VerifyEncProof(
     }
 
     if (encryption_left.u != encryption_right.u || encryption_left.e.size() != encryption_right.e.size())
+    {
+        return false;
+    }
+
+    for (std::uint32_t i = 0; i < encryption_left.e.size(); ++i)
+    {
+        if (encryption_left.e[i] != encryption_right.e[i])
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool CamenischShoupEncZKP::VerifyEncProofWithRepeatedCommitment(
+    const PublicKey& public_key,
+    const CommitmentKey& commitment_key,
+    const Ciphertext& ciphertext,
+    const Commitment& commitment,
+    const ProofMessage& proof_message) const
+{
+    const std::vector<Ciphertext> ciphertexts{ciphertext};
+    const std::vector<Commitment> commitments{commitment};
+    if (!HasExpectedSizes(public_key, commitment_key, ciphertexts, commitments) ||
+        proof_message.ciphertexts.size() != 1 ||
+        proof_message.commitments != commitments ||
+        proof_message.random_ciphertext.e.size() != CamenischShoupEnc::CiphertextEComponentCount ||
+        proof_message.challenges.size() != 1 ||
+        proof_message.plaintext_randomness_responses.size() != 1)
+    {
+        return false;
+    }
+
+    if (proof_message.ciphertexts[0].u != ciphertext.u ||
+        proof_message.ciphertexts[0].e != ciphertext.e)
+    {
+        return false;
+    }
+
+    std::vector<NTL::ZZ> challenges;
+    GenerateChallenges(
+        public_key,
+        ciphertexts,
+        commitments,
+        proof_message.random_ciphertext,
+        proof_message.random_commitment,
+        challenges);
+
+    if (challenges != proof_message.challenges)
+    {
+        return false;
+    }
+
+    const NTL::ZZ& challenge = challenges[0];
+    const NTL::ZZ& plaintext_response =
+        proof_message.plaintext_randomness_responses[0];
+    const NTL::ZZ commitment_modulus = public_key.N * public_key.N;
+
+    Commitment commitment_left;
+    encryption_.GenerateCommitmentWithRandomness(
+        public_key,
+        commitment_key,
+        RepeatedSlotPlaintext(plaintext_response),
+        proof_message.commitment_randomness_response,
+        commitment_left);
+
+    NTL::ZZ commitment_right = MulMod(
+        proof_message.random_commitment.value,
+        PowerMod(commitment.value, challenge, commitment_modulus),
+        commitment_modulus);
+
+    if (commitment_left.value != commitment_right)
+    {
+        return false;
+    }
+
+    Ciphertext encryption_left;
+    encryption_.EncryptWithRandomness(
+        public_key,
+        ScalarPlaintext(plaintext_response),
+        proof_message.encryption_randomness_response,
+        encryption_left);
+
+    Ciphertext encrypted_challenge;
+    encryption_.ScalarMultiply(
+        public_key,
+        encrypted_challenge,
+        ciphertext,
+        challenge);
+
+    Ciphertext encryption_right;
+    encryption_.HomomorphicAdd(
+        public_key,
+        encryption_right,
+        proof_message.random_ciphertext,
+        encrypted_challenge);
+
+    if (encryption_left.u != encryption_right.u ||
+        encryption_left.e.size() != encryption_right.e.size())
     {
         return false;
     }
