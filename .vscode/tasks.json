@@ -103,11 +103,59 @@
       "problemMatcher": []
     },
     {
+      "label": "build pisca protocol test",
+      "type": "shell",
+      "command": "Z:/MSY2/ucrt64/bin/g++.exe",
+      "args": [
+        "PIS-CA Refactor/tests/pisca_protocol_test.cpp",
+        "PIS-CA Refactor/PIS-CA/PISCAProtocol.cpp",
+        "PIS-CA Refactor/CamenischShoup/CamenischShoupEnc.cpp",
+        "PIS-CA Refactor/CamenischShoup/CamenischShoupEncZKP.cpp",
+        "PIS-CA Refactor/ElGamal/ElGamalEnc.cpp",
+        "-std=c++17",
+        "-O0",
+        "-Wall",
+        "-Wextra",
+        "-I",
+        "Z:/MSY2/ucrt64/include",
+        "-L",
+        "Z:/MSY2/ucrt64/lib",
+        "-o",
+        "build/pisca_protocol_test.exe",
+        "-lntl",
+        "-lgmp",
+        "-lssl",
+        "-lcrypto"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PATH": "Z:/MSY2/ucrt64/bin;${env:PATH}"
+        }
+      },
+      "dependsOn": "make build dir",
+      "problemMatcher": ["$gcc"]
+    },
+    {
+      "label": "run pisca protocol test",
+      "type": "shell",
+      "command": "build/pisca_protocol_test.exe",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PATH": "Z:/MSY2/ucrt64/bin;${env:PATH}"
+        }
+      },
+      "dependsOn": "build pisca protocol test",
+      "problemMatcher": []
+    },
+    {
       "label": "build crypto tests",
       "dependsOrder": "sequence",
       "dependsOn": [
-        "build elgamal enc test",
-        "build camenisch shoup enc zkp test"
+        // "build elgamal enc test",
+        // "build camenisch shoup enc zkp test",
+        "build pisca protocol test"
       ],
       "group": {
         "kind": "build",
@@ -119,8 +167,9 @@
       "label": "run crypto tests",
       "dependsOrder": "sequence",
       "dependsOn": [
-        "run elgamal enc test",
-        "run camenisch shoup enc zkp test"
+        // "run elgamal enc test",
+        // "run camenisch shoup enc zkp test",
+        "run pisca protocol test"
       ],
       "problemMatcher": []
     }

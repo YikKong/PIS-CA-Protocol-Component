@@ -43,6 +43,13 @@ bool ExpectEqual(
 {
     return ExpectTrue(actual == expected, case_name);
 }
+
+NTL::ZZ PowerOfTwo(std::uint32_t bit_count)
+{
+    NTL::ZZ value(1);
+    value <<= bit_count;
+    return value;
+}
 }
 
 int main()
@@ -575,6 +582,56 @@ int main()
             commitment_key,
             tampered_beta_message),
         "BatchBeta rejects a tampered b response") && all_passed;
+
+    const NTL::ZZ challenge_bound =
+        PowerOfTwo(CamenischShoupEncZKP::RangeSecurityBits);
+    const NTL::ZZ batch_count(
+        static_cast<long>(beta_proof.message.beta_ciphertexts.size()));
+    const NTL::ZZ a_response_bound =
+        beta_q * PowerOfTwo(CamenischShoupEncZKP::RangeSecurityBits) +
+        batch_count *
+            challenge_bound *
+            beta_q *
+            PowerOfTwo(CamenischShoupEncZKP::RangeSecurityBits + 1);
+    const NTL::ZZ alpha_response_bound =
+        beta_q * PowerOfTwo(2 * CamenischShoupEncZKP::RangeSecurityBits) +
+        batch_count *
+            challenge_bound *
+            beta_q *
+            PowerOfTwo(2 * CamenischShoupEncZKP::RangeSecurityBits + 1);
+    const NTL::ZZ b_response_bound =
+        beta_q * PowerOfTwo(3 * CamenischShoupEncZKP::RangeSecurityBits) +
+        batch_count *
+            challenge_bound *
+            beta_q *
+            PowerOfTwo(3 * CamenischShoupEncZKP::RangeSecurityBits + 1);
+
+    tampered_beta_message = beta_proof.message;
+    tampered_beta_message.a_responses[0] = a_response_bound + 1;
+    all_passed = ExpectTrue(
+        !zkp.VerifyBatchBetaProof(
+            public_key,
+            commitment_key,
+            tampered_beta_message),
+        "BatchBeta rejects an out-of-range a response") && all_passed;
+
+    tampered_beta_message = beta_proof.message;
+    tampered_beta_message.alpha_responses[0] = alpha_response_bound + 1;
+    all_passed = ExpectTrue(
+        !zkp.VerifyBatchBetaProof(
+            public_key,
+            commitment_key,
+            tampered_beta_message),
+        "BatchBeta rejects an out-of-range alpha response") && all_passed;
+
+    tampered_beta_message = beta_proof.message;
+    tampered_beta_message.b_responses[0] = b_response_bound + 1;
+    all_passed = ExpectTrue(
+        !zkp.VerifyBatchBetaProof(
+            public_key,
+            commitment_key,
+            tampered_beta_message),
+        "BatchBeta rejects an out-of-range b response") && all_passed;
 
     tampered_beta_message = beta_proof.message;
     tampered_beta_message.encryption_randomness_response += 1;

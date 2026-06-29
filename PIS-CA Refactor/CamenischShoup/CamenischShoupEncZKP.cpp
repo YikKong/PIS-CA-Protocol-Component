@@ -87,6 +87,30 @@ namespace
             value);
     }
 
+    std::vector<NTL::ZZ> SlottedPlaintext(
+        const NTL::ZZ& value,
+        std::uint32_t slot_index)
+    {
+        std::vector<NTL::ZZ> plaintext(
+            CamenischShoupEnc::PlaintextValuesPerCiphertext,
+            NTL::ZZ(0));
+        plaintext[slot_index % CamenischShoupEnc::PlaintextValuesPerCiphertext] =
+            value;
+        return plaintext;
+    }
+
+    NTL::ZZ PowerOfTwo(std::uint32_t bit_count)
+    {
+        NTL::ZZ value(1);
+        value <<= bit_count;
+        return value;
+    }
+
+    bool IsInRange(const NTL::ZZ& value, const NTL::ZZ& upper_bound)
+    {
+        return value >= 0 && value <= upper_bound;
+    }
+
     struct BNDeleter
     {
         void operator()(BIGNUM* value) const
@@ -595,6 +619,93 @@ void CamenischShoupEncZKP::CreateEncProofWithRepeatedCommitment(
         proof.encryption_randomness_mask + challenge * encryption_randomness;
 }
 
+void CamenischShoupEncZKP::CreateEncProofWithSlottedCommitments(
+    const PublicKey& public_key,
+    const CommitmentKey& commitment_key,
+    const NTL::ZZ& plaintext,
+    const Ciphertext& ciphertext,
+    const NTL::ZZ& encryption_randomness,
+    const std::vector<NTL::ZZ>& commitment_randomness,
+    const std::vector<Commitment>& commitments,
+    Proof& proof) const
+{
+    proof = Proof{};
+    proof.plaintexts = ScalarPlaintext(plaintext);
+    proof.ciphertexts = std::vector<Ciphertext>{ciphertext};
+    proof.encryption_randomness = std::vector<NTL::ZZ>{encryption_randomness};
+    proof.commitment_randomness = commitment_randomness;
+    proof.commitments = commitments;
+
+    const std::uint32_t slot_count =
+        CamenischShoupEnc::PlaintextValuesPerCiphertext;
+    if (public_key.pk.size() != CamenischShoupEnc::CiphertextEComponentCount ||
+        commitment_key.g.size() < CamenischShoupEnc::CommitmentGeneratorCount ||
+        ciphertext.e.size() != CamenischShoupEnc::CiphertextEComponentCount ||
+        commitments.size() != slot_count ||
+        commitment_randomness.size() != slot_count ||
+        slot_count > CamenischShoupEnc::CommitmentGeneratorCount)
+    {
+        std::cout << "slotted commitment proof input size error " << std::endl;
+        return;
+    }
+
+    NTL::ZZ plaintext_mask;
+    RandomBits(plaintext_mask, CamenischShoupEnc::SubPlaintextLens - 10);
+    proof.plaintext_randomness = ScalarPlaintext(plaintext_mask);
+
+    RandomBits(proof.encryption_randomness_mask, NumBits(public_key.N) - 10);
+    proof.commitment_randomness_mask = NTL::ZZ(0);
+
+    proof.message.ciphertexts = proof.ciphertexts;
+    proof.message.commitments = proof.commitments;
+    encryption_.EncryptWithRandomness(
+        public_key,
+        ScalarPlaintext(plaintext_mask),
+        proof.encryption_randomness_mask,
+        proof.message.random_ciphertext);
+
+    const NTL::ZZ commitment_modulus = public_key.N * public_key.N;
+    proof.message.random_commitment.value = NTL::ZZ(1);
+    for (std::uint32_t slot_index = 0; slot_index < slot_count; ++slot_index)
+    {
+        NTL::ZZ slot_randomness_mask;
+        RandomBits(slot_randomness_mask, NumBits(public_key.N) - 10);
+        proof.commitment_randomness_mask += slot_randomness_mask;
+
+        Commitment random_slot_commitment;
+        encryption_.GenerateCommitmentWithRandomness(
+            public_key,
+            commitment_key,
+            SlottedPlaintext(plaintext_mask, slot_index),
+            slot_randomness_mask,
+            random_slot_commitment);
+        proof.message.random_commitment.value = MulMod(
+            proof.message.random_commitment.value,
+            random_slot_commitment.value,
+            commitment_modulus);
+    }
+
+    GenerateChallenges(
+        public_key,
+        proof.message.ciphertexts,
+        proof.message.commitments,
+        proof.message.random_ciphertext,
+        proof.message.random_commitment,
+        proof.message.challenges);
+
+    const NTL::ZZ& challenge = proof.message.challenges[0];
+    proof.message.plaintext_randomness_responses =
+        ScalarPlaintext(plaintext_mask + challenge * plaintext);
+    proof.message.commitment_randomness_response =
+        proof.commitment_randomness_mask;
+    for (const NTL::ZZ& randomness : commitment_randomness)
+    {
+        proof.message.commitment_randomness_response += challenge * randomness;
+    }
+    proof.message.encryption_randomness_response =
+        proof.encryption_randomness_mask + challenge * encryption_randomness;
+}
+
 void CamenischShoupEncZKP::CreateEncProofMessage(
     const PublicKey& public_key,
     const CommitmentKey& commitment_key,
@@ -915,6 +1026,116 @@ bool CamenischShoupEncZKP::VerifyEncProofWithRepeatedCommitment(
     return true;
 }
 
+bool CamenischShoupEncZKP::VerifyEncProofWithSlottedCommitments(
+    const PublicKey& public_key,
+    const CommitmentKey& commitment_key,
+    const Ciphertext& ciphertext,
+    const std::vector<Commitment>& commitments,
+    const ProofMessage& proof_message) const
+{
+    const std::vector<Ciphertext> ciphertexts{ciphertext};
+    const std::uint32_t slot_count =
+        CamenischShoupEnc::PlaintextValuesPerCiphertext;
+    if (public_key.pk.size() != CamenischShoupEnc::CiphertextEComponentCount ||
+        commitment_key.g.size() < CamenischShoupEnc::CommitmentGeneratorCount ||
+        ciphertext.e.size() != CamenischShoupEnc::CiphertextEComponentCount ||
+        commitments.size() != slot_count ||
+        slot_count > CamenischShoupEnc::CommitmentGeneratorCount ||
+        proof_message.ciphertexts.size() != 1 ||
+        proof_message.commitments != commitments ||
+        proof_message.random_ciphertext.e.size() !=
+            CamenischShoupEnc::CiphertextEComponentCount ||
+        proof_message.challenges.size() != 1 ||
+        proof_message.plaintext_randomness_responses.size() != 1)
+    {
+        return false;
+    }
+
+    if (proof_message.ciphertexts[0].u != ciphertext.u ||
+        proof_message.ciphertexts[0].e != ciphertext.e)
+    {
+        return false;
+    }
+
+    std::vector<NTL::ZZ> challenges;
+    GenerateChallenges(
+        public_key,
+        ciphertexts,
+        commitments,
+        proof_message.random_ciphertext,
+        proof_message.random_commitment,
+        challenges);
+
+    if (challenges != proof_message.challenges)
+    {
+        return false;
+    }
+
+    const NTL::ZZ& challenge = challenges[0];
+    const NTL::ZZ& plaintext_response =
+        proof_message.plaintext_randomness_responses[0];
+    const NTL::ZZ commitment_modulus = public_key.N * public_key.N;
+
+    Commitment commitment_left;
+    encryption_.GenerateCommitmentWithRandomness(
+        public_key,
+        commitment_key,
+        RepeatedSlotPlaintext(plaintext_response),
+        proof_message.commitment_randomness_response,
+        commitment_left);
+
+    NTL::ZZ commitment_right = proof_message.random_commitment.value;
+    for (const Commitment& commitment : commitments)
+    {
+        commitment_right = MulMod(
+            commitment_right,
+            PowerMod(commitment.value, challenge, commitment_modulus),
+            commitment_modulus);
+    }
+
+    if (commitment_left.value != commitment_right)
+    {
+        return false;
+    }
+
+    Ciphertext encryption_left;
+    encryption_.EncryptWithRandomness(
+        public_key,
+        ScalarPlaintext(plaintext_response),
+        proof_message.encryption_randomness_response,
+        encryption_left);
+
+    Ciphertext encrypted_challenge;
+    encryption_.ScalarMultiply(
+        public_key,
+        encrypted_challenge,
+        ciphertext,
+        challenge);
+
+    Ciphertext encryption_right;
+    encryption_.HomomorphicAdd(
+        public_key,
+        encryption_right,
+        proof_message.random_ciphertext,
+        encrypted_challenge);
+
+    if (encryption_left.u != encryption_right.u ||
+        encryption_left.e.size() != encryption_right.e.size())
+    {
+        return false;
+    }
+
+    for (std::uint32_t i = 0; i < encryption_left.e.size(); ++i)
+    {
+        if (encryption_left.e[i] != encryption_right.e[i])
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 CamenischShoupEncZKP::Commitment CamenischShoupEncZKP::GenerateCommitment(
     const PublicKey& public_key,
     const CommitmentKey& commitment_key,
@@ -1107,12 +1328,15 @@ void CamenischShoupEncZKP::CreateBatchBetaCiphertextsAndProof(
     const std::uint32_t output_count =
         static_cast<std::uint32_t>(encryption_randomness.size());
     const std::uint32_t slot_count = CamenischShoupEnc::PlaintextValuesPerCiphertext;
-    const long value_mask_bits = CamenischShoupEnc::SubPlaintextLens - 10;
-    const long b_mask_bits = value_mask_bits - NumBits(q);
+    const NTL::ZZ a_mask_bound =
+        q * PowerOfTwo(CamenischShoupEncZKP::RangeSecurityBits);
+    const NTL::ZZ alpha_mask_bound =
+        q * PowerOfTwo(2 * CamenischShoupEncZKP::RangeSecurityBits);
+    const NTL::ZZ b_mask_bound =
+        q * PowerOfTwo(3 * CamenischShoupEncZKP::RangeSecurityBits);
 
     if (output_count == 0 ||
-        q < 0 ||
-        b_mask_bits <= 0 ||
+        q <= 0 ||
         commitment_key.g.size() < slot_count ||
         a.size() != output_count * slot_count ||
         alpha.size() != output_count * slot_count ||
@@ -1199,15 +1423,9 @@ void CamenischShoupEncZKP::CreateBatchBetaCiphertextsAndProof(
     proof.b_masks.reserve(slot_count);
     for (std::uint32_t i = 0; i < slot_count; ++i)
     {
-        NTL::ZZ a_mask;
-        NTL::ZZ alpha_mask;
-        NTL::ZZ b_mask;
-        RandomBits(a_mask, value_mask_bits);
-        RandomBits(alpha_mask, value_mask_bits);
-        RandomBits(b_mask, b_mask_bits);
-        proof.a_masks.emplace_back(a_mask);
-        proof.alpha_masks.emplace_back(alpha_mask);
-        proof.b_masks.emplace_back(b_mask);
+        proof.a_masks.emplace_back(NTL::RandomBnd(a_mask_bound));
+        proof.alpha_masks.emplace_back(NTL::RandomBnd(alpha_mask_bound));
+        proof.b_masks.emplace_back(NTL::RandomBnd(b_mask_bound));
     }
 
     RandomBits(proof.a_commitment_randomness_mask, 2 * CamenischShoupEnc::PrimeBits);
@@ -1438,6 +1656,46 @@ bool CamenischShoupEncZKP::VerifyBatchBetaProof(
         !IsValidCommitment(public_key, proof_message.random_b_commitment))
     {
         return false;
+    }
+
+    const NTL::ZZ challenge_bound =
+        PowerOfTwo(CamenischShoupEncZKP::RangeSecurityBits);
+    const NTL::ZZ batch_count(output_count);
+    const NTL::ZZ a_mask_bound =
+        proof_message.q *
+        PowerOfTwo(CamenischShoupEncZKP::RangeSecurityBits);
+    const NTL::ZZ alpha_mask_bound =
+        proof_message.q *
+        PowerOfTwo(2 * CamenischShoupEncZKP::RangeSecurityBits);
+    const NTL::ZZ b_mask_bound =
+        proof_message.q *
+        PowerOfTwo(3 * CamenischShoupEncZKP::RangeSecurityBits);
+    const NTL::ZZ a_value_bound =
+        proof_message.q *
+        PowerOfTwo(CamenischShoupEncZKP::RangeSecurityBits + 1);
+    const NTL::ZZ alpha_value_bound =
+        proof_message.q *
+        PowerOfTwo(2 * CamenischShoupEncZKP::RangeSecurityBits + 1);
+    const NTL::ZZ b_value_bound =
+        proof_message.q *
+        PowerOfTwo(3 * CamenischShoupEncZKP::RangeSecurityBits + 1);
+    const NTL::ZZ a_response_bound =
+        a_mask_bound + batch_count * challenge_bound * a_value_bound;
+    const NTL::ZZ alpha_response_bound =
+        alpha_mask_bound +
+        batch_count * challenge_bound * alpha_value_bound;
+    const NTL::ZZ b_response_bound =
+        b_mask_bound + batch_count * challenge_bound * b_value_bound;
+    for (std::uint32_t i = 0; i < slot_count; ++i)
+    {
+        if (!IsInRange(proof_message.a_responses[i], a_response_bound) ||
+            !IsInRange(
+                proof_message.alpha_responses[i],
+                alpha_response_bound) ||
+            !IsInRange(proof_message.b_responses[i], b_response_bound))
+        {
+            return false;
+        }
     }
 
     const NTL::ZZ commitment_modulus = public_key.N * public_key.N;
@@ -2202,7 +2460,8 @@ NTL::ZZ CamenischShoupEncZKP::GenerateBatchBetaChallenge(
     AppendCiphertext(stream, proof_message.random_beta_ciphertext);
     AppendElGamalGroupElements(stream, proof_message.random_g_to_a_values);
     stream << output_index << '|';
-    return HashToZZ(stream.str());
+    return HashToZZ(stream.str()) %
+        PowerOfTwo(CamenischShoupEncZKP::RangeSecurityBits);
 }
 
 bool CamenischShoupEncZKP::IsValidCiphertext(

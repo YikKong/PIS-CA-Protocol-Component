@@ -16,6 +16,8 @@
 class CamenischShoupEncZKP
 {
 public:
+    static constexpr std::uint32_t RangeSecurityBits = 112;
+
     using PublicKey = CamenischShoupEnc::PublicKey;
     using CommitmentKey = CamenischShoupEnc::CommitmentKey;
     using Commitment = CamenischShoupEnc::Commitment;
@@ -75,6 +77,16 @@ public:
         const Commitment& commitment,
         Proof& proof) const;
 
+    void CreateEncProofWithSlottedCommitments(
+        const PublicKey& public_key,
+        const CommitmentKey& commitment_key,
+        const NTL::ZZ& plaintext,
+        const Ciphertext& ciphertext,
+        const NTL::ZZ& encryption_randomness,
+        const std::vector<NTL::ZZ>& commitment_randomness,
+        const std::vector<Commitment>& commitments,
+        Proof& proof) const;
+
     void CreateEncProofMessage(
         const PublicKey& public_key,
         const CommitmentKey& commitment_key,
@@ -112,6 +124,13 @@ public:
         const CommitmentKey& commitment_key,
         const Ciphertext& ciphertext,
         const Commitment& commitment,
+        const ProofMessage& proof_message) const;
+
+    bool VerifyEncProofWithSlottedCommitments(
+        const PublicKey& public_key,
+        const CommitmentKey& commitment_key,
+        const Ciphertext& ciphertext,
+        const std::vector<Commitment>& commitments,
         const ProofMessage& proof_message) const;
 
     struct BatchBetaProofMessage
