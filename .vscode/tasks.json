@@ -57,6 +57,49 @@
       "problemMatcher": []
     },
     {
+      "label": "build elgamal commitment test",
+      "type": "shell",
+      "command": "Z:/MSY2/ucrt64/bin/g++.exe",
+      "args": [
+        "PIS-CA Refactor/tests/elgamal_commitment_test.cpp",
+        "PIS-CA Refactor/Curdleproofs/ElGamalCommitment/ElGamalCommitment.cpp",
+        "PIS-CA Refactor/ElGamal/ElGamalEnc.cpp",
+        "-std=c++17",
+        "-O0",
+        "-Wall",
+        "-Wextra",
+        "-I",
+        "Z:/MSY2/ucrt64/include",
+        "-L",
+        "Z:/MSY2/ucrt64/lib",
+        "-o",
+        "build/elgamal_commitment_test.exe",
+        "-lssl",
+        "-lcrypto"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PATH": "Z:/MSY2/ucrt64/bin;${env:PATH}"
+        }
+      },
+      "dependsOn": "make build dir",
+      "problemMatcher": ["$gcc"]
+    },
+    {
+      "label": "run elgamal commitment test",
+      "type": "shell",
+      "command": "build/elgamal_commitment_test.exe",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PATH": "Z:/MSY2/ucrt64/bin;${env:PATH}"
+        }
+      },
+      "dependsOn": "build elgamal commitment test",
+      "problemMatcher": []
+    },
+    {
       "label": "build camenisch shoup enc zkp test",
       "type": "shell",
       "command": "Z:/MSY2/ucrt64/bin/g++.exe",
@@ -155,7 +198,8 @@
       "dependsOn": [
         // "build elgamal enc test",
         // "build camenisch shoup enc zkp test",
-        "build pisca protocol test"
+        // "build pisca protocol test",
+        "build elgamal commitment test"
       ],
       "group": {
         "kind": "build",
@@ -169,7 +213,8 @@
       "dependsOn": [
         // "run elgamal enc test",
         // "run camenisch shoup enc zkp test",
-        "run pisca protocol test"
+        // "run pisca protocol test",
+        "run elgamal commitment test"
       ],
       "problemMatcher": []
     }
