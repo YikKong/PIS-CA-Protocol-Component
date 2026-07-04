@@ -15,12 +15,12 @@
       "problemMatcher": []
     },
     {
-      "label": "build same scalar argument test",
+      "label": "build same multi scalar argument test",
       "type": "shell",
       "command": "Z:/MSY2/ucrt64/bin/g++.exe",
       "args": [
-        "PIS-CA Refactor/tests/same_scalar_argument_test.cpp",
-        "PIS-CA Refactor/Curdleproofs/SameSalar Argument/SameScalarArgument.cpp",
+        "PIS-CA Refactor/tests/same_multi_scalar_argument_test.cpp",
+        "PIS-CA Refactor/Curdleproofs/SameMultiScalar Argument/SameMultiScalarArgument.cpp",
         "PIS-CA Refactor/Curdleproofs/ElGamalCommitment/ElGamalCommitment.cpp",
         "PIS-CA Refactor/ElGamal/ElGamalEnc.cpp",
         "-std=c++17",
@@ -32,7 +32,7 @@
         "-L",
         "Z:/MSY2/ucrt64/lib",
         "-o",
-        "build/same_scalar_argument_test.exe",
+        "build/same_multi_scalar_argument_test.exe",
         "-lssl",
         "-lcrypto"
       ],
@@ -48,26 +48,15 @@
         "isDefault": true
       },
       "problemMatcher": ["$gcc"]
-    },
-    {
-      "label": "run same scalar argument test",
-      "type": "shell",
-      "command": "build/same_scalar_argument_test.exe",
-      "options": {
-        "cwd": "${workspaceFolder}",
-        "env": {
-          "PATH": "Z:/MSY2/ucrt64/bin;${env:PATH}"
-        }
-      },
-      "dependsOn": "build same scalar argument test",
-      "problemMatcher": []
     }
 
     /*
     Other compile/run tasks are intentionally commented out while working on
-    SameScalarArgument.
+    SameMultiScalarArgument.
 
     Previous tasks:
+    - build same scalar argument test
+    - run same scalar argument test
     - build elgamal enc test
     - run elgamal enc test
     - build elgamal commitment test
