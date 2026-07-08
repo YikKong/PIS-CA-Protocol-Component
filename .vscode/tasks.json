@@ -15,13 +15,12 @@
       "problemMatcher": []
     },
     {
-      "label": "build same multi scalar argument test",
+      "label": "build same permutation argument test",
       "type": "shell",
       "command": "Z:/MSY2/ucrt64/bin/g++.exe",
       "args": [
-        "PIS-CA Refactor/tests/same_multi_scalar_argument_test.cpp",
-        "PIS-CA Refactor/Curdleproofs/SameMultiScalar Argument/SameMultiScalarArgument.cpp",
-        "PIS-CA Refactor/Curdleproofs/ElGamalCommitment/ElGamalCommitment.cpp",
+        "PIS-CA Refactor/tests/same_permutation_argument_test.cpp",
+        "PIS-CA Refactor/Curdleproofs/SamePermutation Argument/SamePermutationArgument.cpp",
         "PIS-CA Refactor/ElGamal/ElGamalEnc.cpp",
         "-std=c++17",
         "-O0",
@@ -32,7 +31,7 @@
         "-L",
         "Z:/MSY2/ucrt64/lib",
         "-o",
-        "build/same_multi_scalar_argument_test.exe",
+        "build/same_permutation_argument_test.exe",
         "-lssl",
         "-lcrypto"
       ],
@@ -48,13 +47,28 @@
         "isDefault": true
       },
       "problemMatcher": ["$gcc"]
+    },
+    {
+      "label": "run same permutation argument test",
+      "type": "shell",
+      "command": "build/same_permutation_argument_test.exe",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PATH": "Z:/MSY2/ucrt64/bin;${env:PATH}"
+        }
+      },
+      "dependsOn": "build same permutation argument test",
+      "problemMatcher": []
     }
 
     /*
     Other compile/run tasks are intentionally commented out while working on
-    SameMultiScalarArgument.
+    SamePermutationArgument.
 
     Previous tasks:
+    - build same multi scalar argument test
+    - run same multi scalar argument test
     - build same scalar argument test
     - run same scalar argument test
     - build elgamal enc test
