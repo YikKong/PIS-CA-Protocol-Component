@@ -515,7 +515,7 @@ void SameScalarArgument::InitializePublicInstance(
                 group,
                 new_u_a_sum,
                 nullptr,
-                public_key.g,
+                public_key.generator,
                 sum_a,
                 bn_ctx_) == 1 &&
             EC_POINT_mul(

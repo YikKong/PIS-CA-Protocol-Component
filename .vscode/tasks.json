@@ -15,12 +15,16 @@
       "problemMatcher": []
     },
     {
-      "label": "build same permutation argument test",
+      "label": "build curdleproofs test",
       "type": "shell",
       "command": "Z:/MSY2/ucrt64/bin/g++.exe",
       "args": [
-        "PIS-CA Refactor/tests/same_permutation_argument_test.cpp",
+        "PIS-CA Refactor/tests/curdleproofs_test.cpp",
+        "PIS-CA Refactor/Curdleproofs/Curdleproofs.cpp",
+        "PIS-CA Refactor/Curdleproofs/SameSalar Argument/SameScalarArgument.cpp",
+        "PIS-CA Refactor/Curdleproofs/SameMultiScalar Argument/SameMultiScalarArgument.cpp",
         "PIS-CA Refactor/Curdleproofs/SamePermutation Argument/SamePermutationArgument.cpp",
+        "PIS-CA Refactor/Curdleproofs/ElGamalCommitment/ElGamalCommitment.cpp",
         "PIS-CA Refactor/ElGamal/ElGamalEnc.cpp",
         "-std=c++17",
         "-O0",
@@ -31,7 +35,7 @@
         "-L",
         "Z:/MSY2/ucrt64/lib",
         "-o",
-        "build/same_permutation_argument_test.exe",
+        "build/curdleproofs_test.exe",
         "-lssl",
         "-lcrypto"
       ],
@@ -49,16 +53,16 @@
       "problemMatcher": ["$gcc"]
     },
     {
-      "label": "run same permutation argument test",
+      "label": "run curdleproofs test",
       "type": "shell",
-      "command": "build/same_permutation_argument_test.exe",
+      "command": "build/curdleproofs_test.exe",
       "options": {
         "cwd": "${workspaceFolder}",
         "env": {
           "PATH": "Z:/MSY2/ucrt64/bin;${env:PATH}"
         }
       },
-      "dependsOn": "build same permutation argument test",
+      "dependsOn": "build curdleproofs test",
       "problemMatcher": []
     }
 
