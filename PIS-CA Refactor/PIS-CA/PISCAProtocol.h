@@ -9,7 +9,9 @@
 
 #include "../CamenischShoup/CamenischShoupEnc.h"
 #include "../CamenischShoup/CamenischShoupEncZKP.h"
+#include "../Curdleproofs/ElGamalCommitment/ElGamalCommitment.h"
 #include "../ElGamal/ElGamalEnc.h"
+#include "SigmaCiphertextArgument.h"
 
 class PISCAProtocol
 {
@@ -63,11 +65,17 @@ public:
     struct RoundThreeMessage
     {
         CamenischShoupEncZKP::DecProofMessage proof_message;
+        std::vector<ElGamalEnc::Ciphertext> sigma_ciphertexts;
+        SigmaCiphertextArgument::ProofMessage sigma_proof_message;
     };
 
     struct RoundThreeWitness
     {
         CamenischShoupEncZKP::DecProof proof;
+        std::vector<NTL::ZZ> gamma;
+        std::vector<ElGamalEnc::GroupElement> sigma;
+        std::vector<std::shared_ptr<BIGNUM>> sigma_encryption_randomness;
+        SigmaCiphertextArgument::Proof sigma_proof;
     };
 
     struct RoundThreeState
@@ -88,6 +96,7 @@ public:
         ElGamalEnc::PublicKey elgamal_public_key;
         ElGamalEnc::SecretKey elgamal_secret_key;
         ElGamalEnc::CommitmentKey elgamal_commitment_key;
+        ElGamalCommitment::CommitmentKey sigma_argument_commitment_key;
 
         NTL::ZZ k;
         RoundOneState round_one;
@@ -155,6 +164,8 @@ private:
     CamenischShoupEnc camenisch_shoup_;
     CamenischShoupEncZKP camenisch_shoup_zkp_;
     ElGamalEnc elgamal_;
+    ElGamalCommitment sigma_argument_commitment_;
+    SigmaCiphertextArgument sigma_ciphertext_argument_;
 };
 
 #endif // PISCA_PROTOCOL_H

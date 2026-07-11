@@ -99,6 +99,16 @@ NTL::ZZ BignumToZZ(const BIGNUM* value)
     return result;
 }
 
+std::shared_ptr<BIGNUM> ZZToBignum(const NTL::ZZ& value)
+{
+    BIGNUM* result = nullptr;
+    const std::string decimal = ToString(value);
+    ThrowIf(
+        BN_dec2bn(&result, decimal.c_str()) == 0,
+        "NTL integer to BIGNUM conversion failed");
+    return std::shared_ptr<BIGNUM>(result, BN_clear_free);
+}
+
 NTL::ZZ GenerateDoprfKey(const BIGNUM* elgamal_order)
 {
     const NTL::ZZ q = BignumToZZ(elgamal_order);
@@ -110,7 +120,9 @@ NTL::ZZ GenerateDoprfKey(const BIGNUM* elgamal_order)
 
 PISCAProtocol::PISCAProtocol()
     : camenisch_shoup_zkp_(camenisch_shoup_),
-      elgamal_()
+      elgamal_(),
+      sigma_argument_commitment_(elgamal_),
+      sigma_ciphertext_argument_(elgamal_)
 {
 }
 
@@ -140,6 +152,9 @@ void PISCAProtocol::Setup(
         p2.elgamal_public_key,
         p2.elgamal_secret_key);
     p2.elgamal_commitment_key = p1.elgamal_commitment_key;
+
+    sigma_argument_commitment_.Setup(p1.sigma_argument_commitment_key);
+    p2.sigma_argument_commitment_key = p1.sigma_argument_commitment_key;
 
     p1.k = GenerateDoprfKey(elgamal_.Order());
     p2.k = GenerateDoprfKey(elgamal_.Order());
@@ -279,11 +294,20 @@ bool PISCAProtocol::VerifyRoundThree(
     const PartyState& computation_party) const
 {
     return camenisch_shoup_zkp_.VerifyDecProof(
-        decryption_party.camenisch_shoup_public_key,
-        computation_party.camenisch_shoup_commitment_key,
-        elgamal_,
-        computation_party.elgamal_commitment_key,
-        decryption_party.round_three.message.proof_message);
+               decryption_party.camenisch_shoup_public_key,
+               computation_party.camenisch_shoup_commitment_key,
+               elgamal_,
+               computation_party.elgamal_commitment_key,
+               decryption_party.round_three.message.proof_message) &&
+        sigma_ciphertext_argument_.VerifyProof(
+            decryption_party.elgamal_public_key,
+            decryption_party.sigma_argument_commitment_key,
+            computation_party.elgamal_commitment_key,
+            computation_party.round_two.message.proof_message.g_to_a_values,
+            decryption_party.round_three.message.proof_message
+                .elgamal_beta_commitments,
+            decryption_party.round_three.message.sigma_ciphertexts,
+            decryption_party.round_three.message.sigma_proof_message);
 }
 
 bool PISCAProtocol::CamenischShoupParametersAreIndependent(
@@ -579,6 +603,9 @@ void PISCAProtocol::GenerateRoundThreeState(
     ThrowIf(
         !elgamal_.IsValidCommitmentKey(computation_party.elgamal_commitment_key),
         "PIS-CA round three ElGamal commitment key is not initialized");
+    ThrowIf(
+        !elgamal_.IsValidPublicKey(decryption_party.elgamal_public_key),
+        "PIS-CA round three decryption-party ElGamal public key is not initialized");
 
     state = RoundThreeState{};
     camenisch_shoup_zkp_.CreateDecProofAndCommitments(
@@ -590,4 +617,98 @@ void PISCAProtocol::GenerateRoundThreeState(
         computation_party.round_two.message.proof_message.beta_ciphertexts,
         state.witness.proof);
     state.message.proof_message = state.witness.proof.message;
+
+    const std::vector<NTL::ZZ>& beta = state.witness.proof.beta;
+    const std::vector<ElGamalEnc::GroupElement>& g_values =
+        computation_party.round_two.message.proof_message.g_to_a_values;
+    const std::size_t sigma_count = computation_party.input.size();
+    ThrowIf(
+        beta.size() < sigma_count || g_values.size() < sigma_count,
+        "PIS-CA round three beta and g value counts do not match the computation-party input");
+
+    const NTL::ZZ q = BignumToZZ(elgamal_.Order());
+    ThrowIf(q <= 1, "PIS-CA round three ElGamal order is invalid");
+
+    RoundThreeWitness& witness = state.witness;
+    witness.gamma.reserve(sigma_count);
+    witness.sigma.reserve(sigma_count);
+    witness.sigma_encryption_randomness.reserve(sigma_count);
+    state.message.sigma_ciphertexts.reserve(sigma_count);
+
+    BN_CTX* context = BN_CTX_new();
+    ThrowIf(context == nullptr, "PIS-CA round three EC context allocation failed");
+    try
+    {
+        for (std::size_t i = 0; i < sigma_count; ++i)
+        {
+            NTL::ZZ beta_mod_q = beta[i] % q;
+            if (beta_mod_q < 0)
+            {
+                beta_mod_q += q;
+            }
+            ThrowIf(
+                beta_mod_q == 0,
+                "PIS-CA round three beta has no inverse modulo the ElGamal order");
+
+            const NTL::ZZ gamma_i = NTL::InvMod(beta_mod_q, q);
+            std::shared_ptr<BIGNUM> gamma_bn = ZZToBignum(gamma_i);
+            ThrowIf(
+                !elgamal_.IsValidGroupElement(g_values[i]),
+                "PIS-CA round three g value is invalid");
+
+            ElGamalEnc::GroupElement sigma_i;
+            sigma_i.group = elgamal_.Group();
+            sigma_i.value = elgamal_.NewPoint();
+            ThrowIf(
+                sigma_i.value == nullptr ||
+                    EC_POINT_mul(
+                        sigma_i.group,
+                        sigma_i.value,
+                        nullptr,
+                        g_values[i].value,
+                        gamma_bn.get(),
+                        context) != 1,
+                "PIS-CA round three sigma computation failed");
+
+            std::shared_ptr<BIGNUM> encryption_randomness(
+                BN_new(),
+                BN_clear_free);
+            ThrowIf(
+                encryption_randomness == nullptr,
+                "PIS-CA round three ElGamal randomness allocation failed");
+            ElGamalEnc::Ciphertext sigma_ciphertext;
+            elgamal_.Encrypt(
+                decryption_party.elgamal_public_key,
+                sigma_i.value,
+                encryption_randomness.get(),
+                sigma_ciphertext);
+
+            witness.gamma.emplace_back(gamma_i);
+            witness.sigma.emplace_back(std::move(sigma_i));
+            witness.sigma_encryption_randomness.emplace_back(
+                std::move(encryption_randomness));
+            state.message.sigma_ciphertexts.emplace_back(
+                std::move(sigma_ciphertext));
+        }
+    }
+    catch (...)
+    {
+        BN_CTX_free(context);
+        throw;
+    }
+    BN_CTX_free(context);
+
+    sigma_ciphertext_argument_.CreateProof(
+        decryption_party.elgamal_public_key,
+        decryption_party.sigma_argument_commitment_key,
+        computation_party.elgamal_commitment_key,
+        computation_party.round_two.message.proof_message.g_to_a_values,
+        state.witness.proof.message.elgamal_beta_commitments,
+        state.witness.proof.elgamal_commitment_randomness,
+        state.witness.proof.beta,
+        state.message.sigma_ciphertexts,
+        state.witness.sigma_encryption_randomness,
+        state.witness.sigma_proof);
+    state.message.sigma_proof_message =
+        state.witness.sigma_proof.message;
 }

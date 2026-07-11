@@ -64,6 +64,105 @@
       },
       "dependsOn": "build curdleproofs test",
       "problemMatcher": []
+    },
+    {
+      "label": "build sigma ciphertext argument test",
+      "type": "shell",
+      "command": "Z:/MSY2/ucrt64/bin/g++.exe",
+      "args": [
+        "PIS-CA Refactor/tests/sigma_ciphertext_argument_test.cpp",
+        "PIS-CA Refactor/PIS-CA/SigmaCiphertextArgument.cpp",
+        "PIS-CA Refactor/Curdleproofs/SameSalar Argument/SameScalarArgument.cpp",
+        "PIS-CA Refactor/Curdleproofs/SameMultiScalar Argument/SameMultiScalarArgument.cpp",
+        "PIS-CA Refactor/Curdleproofs/ElGamalCommitment/ElGamalCommitment.cpp",
+        "PIS-CA Refactor/ElGamal/ElGamalEnc.cpp",
+        "-std=c++17",
+        "-O0",
+        "-Wall",
+        "-Wextra",
+        "-I",
+        "Z:/MSY2/ucrt64/include",
+        "-L",
+        "Z:/MSY2/ucrt64/lib",
+        "-o",
+        "build/sigma_ciphertext_argument_test.exe",
+        "-lntl",
+        "-lgmp",
+        "-lssl",
+        "-lcrypto"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PATH": "Z:/MSY2/ucrt64/bin;${env:PATH}"
+        }
+      },
+      "dependsOn": "make build dir",
+      "problemMatcher": ["$gcc"]
+    },
+    {
+      "label": "run sigma ciphertext argument test",
+      "type": "shell",
+      "command": "build/sigma_ciphertext_argument_test.exe",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PATH": "Z:/MSY2/ucrt64/bin;${env:PATH}"
+        }
+      },
+      "dependsOn": "build sigma ciphertext argument test",
+      "problemMatcher": []
+    },
+    {
+      "label": "build pisca protocol test",
+      "type": "shell",
+      "command": "Z:/MSY2/ucrt64/bin/g++.exe",
+      "args": [
+        "PIS-CA Refactor/tests/pisca_protocol_test.cpp",
+        "PIS-CA Refactor/PIS-CA/PISCAProtocol.cpp",
+        "PIS-CA Refactor/PIS-CA/SigmaCiphertextArgument.cpp",
+        "PIS-CA Refactor/CamenischShoup/CamenischShoupEnc.cpp",
+        "PIS-CA Refactor/CamenischShoup/CamenischShoupEncZKP.cpp",
+        "PIS-CA Refactor/ElGamal/ElGamalEnc.cpp",
+        "PIS-CA Refactor/Curdleproofs/ElGamalCommitment/ElGamalCommitment.cpp",
+        "PIS-CA Refactor/Curdleproofs/SameSalar Argument/SameScalarArgument.cpp",
+        "PIS-CA Refactor/Curdleproofs/SameMultiScalar Argument/SameMultiScalarArgument.cpp",
+        "-std=c++17",
+        "-O0",
+        "-Wall",
+        "-Wextra",
+        "-I",
+        "Z:/MSY2/ucrt64/include",
+        "-L",
+        "Z:/MSY2/ucrt64/lib",
+        "-o",
+        "build/pisca_protocol_test.exe",
+        "-lntl",
+        "-lgmp",
+        "-lssl",
+        "-lcrypto"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PATH": "Z:/MSY2/ucrt64/bin;${env:PATH}"
+        }
+      },
+      "dependsOn": "make build dir",
+      "problemMatcher": ["$gcc"]
+    },
+    {
+      "label": "run pisca protocol test",
+      "type": "shell",
+      "command": "build/pisca_protocol_test.exe",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PATH": "Z:/MSY2/ucrt64/bin;${env:PATH}"
+        }
+      },
+      "dependsOn": "build pisca protocol test",
+      "problemMatcher": []
     }
 
     /*

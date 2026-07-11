@@ -254,6 +254,70 @@ bool ComputePiscaOutputElements(
     return true;
 }
 
+bool SigmaCiphertextsDecryptCorrectly(
+    const ElGamalEnc::SecretKey& secret_key,
+    const std::vector<ElGamalEnc::Ciphertext>& ciphertexts,
+    const std::vector<ElGamalEnc::GroupElement>& plaintexts)
+{
+    if (secret_key.sk == nullptr || ciphertexts.size() != plaintexts.size())
+    {
+        return false;
+    }
+
+    UniqueBNCTX context(BN_CTX_new());
+    if (!context)
+    {
+        return false;
+    }
+    for (std::size_t i = 0; i < ciphertexts.size(); ++i)
+    {
+        const ElGamalEnc::Ciphertext& ciphertext = ciphertexts[i];
+        const ElGamalEnc::GroupElement& plaintext = plaintexts[i];
+        if (ciphertext.group == nullptr ||
+            ciphertext.group != plaintext.group ||
+            ciphertext.u == nullptr ||
+            ciphertext.e == nullptr ||
+            plaintext.value == nullptr)
+        {
+            return false;
+        }
+
+        std::unique_ptr<EC_POINT, decltype(&EC_POINT_free)> shared_secret(
+            EC_POINT_new(ciphertext.group),
+            EC_POINT_free);
+        std::unique_ptr<EC_POINT, decltype(&EC_POINT_free)> decrypted(
+            EC_POINT_dup(ciphertext.e, ciphertext.group),
+            EC_POINT_free);
+        if (!shared_secret || !decrypted ||
+            EC_POINT_mul(
+                ciphertext.group,
+                shared_secret.get(),
+                nullptr,
+                ciphertext.u,
+                secret_key.sk,
+                context.get()) != 1 ||
+            EC_POINT_invert(
+                ciphertext.group,
+                shared_secret.get(),
+                context.get()) != 1 ||
+            EC_POINT_add(
+                ciphertext.group,
+                decrypted.get(),
+                decrypted.get(),
+                shared_secret.get(),
+                context.get()) != 1 ||
+            EC_POINT_cmp(
+                ciphertext.group,
+                decrypted.get(),
+                plaintext.value,
+                context.get()) != 0)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 }
 
 int main()
@@ -450,8 +514,43 @@ int main()
         "P2 RoundThree decrypts P1 beta ciphertexts and commits to beta") &&
         all_passed;
     all_passed = ExpectTrue(
+        p2.round_three.witness.gamma.size() == p1.input.size() &&
+            p2.round_three.witness.sigma.size() == p1.input.size() &&
+            p2.round_three.witness.sigma_encryption_randomness.size() ==
+                p1.input.size() &&
+            p2.round_three.message.sigma_ciphertexts.size() ==
+                p1.input.size() &&
+            SigmaCiphertextsDecryptCorrectly(
+                p2.elgamal_secret_key,
+                p2.round_three.message.sigma_ciphertexts,
+                p2.round_three.witness.sigma),
+        "P2 RoundThree encrypts sigma with P2 ElGamal public key") &&
+        all_passed;
+    all_passed = ExpectTrue(
         protocol.VerifyRoundThree(p2, p1),
-        "P2 RoundThree proof verifies beta decryption and commitments") &&
+        "P2 RoundThree proof verifies beta decryption, commitments, and sigma ciphertexts") &&
+        all_passed;
+
+    PISCAProtocol::P2 tampered_sigma_ciphertext_p2 = p2;
+    tampered_sigma_ciphertext_p2.round_three.message.sigma_ciphertexts[0] =
+        p2.round_three.message.sigma_ciphertexts[1];
+    all_passed = ExpectTrue(
+        !protocol.VerifyRoundThree(tampered_sigma_ciphertext_p2, p1),
+        "Round-three verification rejects a tampered sigma ciphertext") &&
+        all_passed;
+
+    PISCAProtocol::P2 tampered_sigma_public_instance_p2 = p2;
+    if (tampered_sigma_public_instance_p2.round_three.message
+            .sigma_proof_message.public_instance.same_scalar.a[0] != nullptr)
+    {
+        BN_add_word(
+            tampered_sigma_public_instance_p2.round_three.message
+                .sigma_proof_message.public_instance.same_scalar.a[0],
+            1);
+    }
+    all_passed = ExpectTrue(
+        !protocol.VerifyRoundThree(tampered_sigma_public_instance_p2, p1),
+        "Round-three verification binds the sigma proof public instance") &&
         all_passed;
 
     PISCAProtocol::P2 tampered_round_three_p2 = p2;
@@ -481,7 +580,13 @@ int main()
     protocol.ExecuteRoundThree(p1, p2);
     all_passed = ExpectTrue(
         protocol.VerifyRoundThree(p1, p2),
-        "P1 RoundThree proof verifies beta decryption and commitments") &&
+        "P1 RoundThree proof verifies beta decryption, commitments, and sigma ciphertexts") &&
+        all_passed;
+    all_passed = ExpectTrue(
+        p1.round_three.message.sigma_ciphertexts.size() == p2.input.size() &&
+            p1.round_three.message.sigma_proof_message.public_instance
+                    .same_multi_scalar.ciphertexts.size() == p2.input.size(),
+        "P1 RoundThree sends sigma ciphertexts and SameMultiScalar public input") &&
         all_passed;
 
     ElGamalEnc comparison_elgamal;

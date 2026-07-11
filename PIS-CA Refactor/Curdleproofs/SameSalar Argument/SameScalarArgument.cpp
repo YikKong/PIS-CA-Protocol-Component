@@ -1071,7 +1071,6 @@ bool SameScalarArgument::IsValidPublicInstance(
         EC_POINT_is_on_curve(expected_group, public_instance.e, bn_ctx_) == 1 &&
         EC_POINT_is_on_curve(expected_group, public_instance.u_a_sum, bn_ctx_) == 1 &&
         EC_POINT_is_on_curve(expected_group, public_instance.e_a_sum, bn_ctx_) == 1 &&
-        EC_POINT_is_at_infinity(expected_group, public_instance.u) != 1 &&
         EC_POINT_is_at_infinity(expected_group, public_instance.e) != 1 &&
         EC_POINT_is_at_infinity(expected_group, public_instance.u_a_sum) != 1 &&
         EC_POINT_is_at_infinity(expected_group, public_instance.e_a_sum) != 1 &&
