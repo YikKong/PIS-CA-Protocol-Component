@@ -77,6 +77,13 @@ std::string PointToHex(const EC_GROUP* group, const EC_POINT* point)
     return result;
 }
 
+bool PointIsInfinity(const EC_GROUP* group, const EC_POINT* point)
+{
+    return group != nullptr &&
+        point != nullptr &&
+        EC_POINT_is_at_infinity(group, point) == 1;
+}
+
 void PrintInputSet(
     const std::string& label,
     const std::vector<NTL::ZZ>& input)
@@ -98,6 +105,51 @@ void PrintOutputElements(
         std::cout
             << "  [" << i << "] "
             << PointToHex(outputs[i].group, outputs[i].value)
+            << std::endl;
+    }
+}
+
+void PrintRoundThreeShuffleData(
+    const std::string& label,
+    const PISCAProtocol::PartyState& party)
+{
+    std::cout << label << " sigma ciphertexts before shuffle:" << std::endl;
+    for (std::uint32_t i = 0;
+         i < party.round_three.message.sigma_ciphertexts.size();
+         ++i)
+    {
+        const ElGamalEnc::Ciphertext& ciphertext =
+            party.round_three.message.sigma_ciphertexts[i];
+        std::cout
+            << "  [" << i << "] u="
+            << PointToHex(ciphertext.group, ciphertext.u)
+            << " e="
+            << PointToHex(ciphertext.group, ciphertext.e);
+        if (i < party.round_three.witness.sigma.size())
+        {
+            std::cout
+                << " plaintext_sigma="
+                << PointToHex(
+                    party.round_three.witness.sigma[i].group,
+                    party.round_three.witness.sigma[i].value);
+        }
+        std::cout << std::endl;
+    }
+
+    std::cout << label << " shuffled (O, sigma) ciphertexts sent to peer:" << std::endl;
+    for (std::uint32_t i = 0;
+         i < party.round_three.message.shuffled_sigma_ciphertexts.size();
+         ++i)
+    {
+        const ElGamalEnc::Ciphertext& ciphertext =
+            party.round_three.message.shuffled_sigma_ciphertexts[i];
+        std::cout
+            << "  [" << i << "] u="
+            << (PointIsInfinity(ciphertext.group, ciphertext.u)
+                    ? std::string("O")
+                    : PointToHex(ciphertext.group, ciphertext.u))
+            << " sigma="
+            << PointToHex(ciphertext.group, ciphertext.e)
             << std::endl;
     }
 }
@@ -318,6 +370,45 @@ bool SigmaCiphertextsDecryptCorrectly(
     return true;
 }
 
+bool ShuffledSigmaCiphertextsMatchWitness(
+    const std::vector<ElGamalEnc::Ciphertext>& shuffled_ciphertexts,
+    const std::vector<ElGamalEnc::GroupElement>& sigma,
+    const std::vector<std::size_t>& permutation)
+{
+    if (shuffled_ciphertexts.size() != permutation.size() ||
+        sigma.size() < permutation.size())
+    {
+        return false;
+    }
+
+    UniqueBNCTX context(BN_CTX_new());
+    if (!context)
+    {
+        return false;
+    }
+    for (std::size_t i = 0; i < permutation.size(); ++i)
+    {
+        const std::size_t source_index = permutation[i];
+        const ElGamalEnc::Ciphertext& ciphertext = shuffled_ciphertexts[i];
+        if (source_index >= sigma.size() ||
+            ciphertext.group == nullptr ||
+            ciphertext.group != sigma[source_index].group ||
+            ciphertext.u == nullptr ||
+            ciphertext.e == nullptr ||
+            sigma[source_index].value == nullptr ||
+            EC_POINT_is_at_infinity(ciphertext.group, ciphertext.u) != 1 ||
+            EC_POINT_cmp(
+                ciphertext.group,
+                ciphertext.e,
+                sigma[source_index].value,
+                context.get()) != 0)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 }
 
 int main()
@@ -357,15 +448,34 @@ int main()
     all_passed = ExpectTrue(
         protocol.InitializeP1(
             std::vector<NTL::ZZ>{
-                NTL::ZZ(10), NTL::ZZ(20), NTL::ZZ(30), NTL::ZZ(40)},
+                NTL::ZZ(10),
+                NTL::ZZ(20),
+                NTL::ZZ(30),
+                NTL::ZZ(40),
+                NTL::ZZ(50),
+                NTL::ZZ(60),
+                NTL::ZZ(70)},
             std::vector<NTL::ZZ>{
-                NTL::ZZ(7), NTL::ZZ(11), NTL::ZZ(13), NTL::ZZ(17)},
+                NTL::ZZ(7),
+                NTL::ZZ(11),
+                NTL::ZZ(13),
+                NTL::ZZ(17),
+                NTL::ZZ(19),
+                NTL::ZZ(23),
+                NTL::ZZ(29)},
             p1),
         "P1 input accepts same-sized x and v sets") &&
         all_passed;
     all_passed = ExpectTrue(
         protocol.InitializeP2(
-            std::vector<NTL::ZZ>{NTL::ZZ(15), NTL::ZZ(20), NTL::ZZ(40)},
+            std::vector<NTL::ZZ>{
+                NTL::ZZ(15),
+                NTL::ZZ(20),
+                NTL::ZZ(35),
+                NTL::ZZ(40),
+                NTL::ZZ(55),
+                NTL::ZZ(60),
+                NTL::ZZ(80)},
             p2),
         "P2 input accepts y set") &&
         all_passed;
@@ -530,6 +640,16 @@ int main()
         protocol.VerifyRoundThree(p2, p1),
         "P2 RoundThree proof verifies beta decryption, commitments, and sigma ciphertexts") &&
         all_passed;
+    all_passed = ExpectTrue(
+        p2.round_three.message.shuffled_sigma_ciphertexts.size() == p1.input.size() &&
+            p2.round_three.message.sigma_shuffle_public_instance
+                    .output_ciphertexts.size() == p1.input.size() &&
+            ShuffledSigmaCiphertextsMatchWitness(
+                p2.round_three.message.shuffled_sigma_ciphertexts,
+                p2.round_three.witness.sigma,
+                p2.round_three.witness.sigma_permutation),
+        "P2 RoundThree shuffles derandomized (O, sigma) ciphertexts") &&
+        all_passed;
 
     PISCAProtocol::P2 tampered_sigma_ciphertext_p2 = p2;
     tampered_sigma_ciphertext_p2.round_three.message.sigma_ciphertexts[0] =
@@ -551,6 +671,14 @@ int main()
     all_passed = ExpectTrue(
         !protocol.VerifyRoundThree(tampered_sigma_public_instance_p2, p1),
         "Round-three verification binds the sigma proof public instance") &&
+        all_passed;
+
+    PISCAProtocol::P2 tampered_shuffle_output_p2 = p2;
+    tampered_shuffle_output_p2.round_three.message.shuffled_sigma_ciphertexts[0] =
+        p2.round_three.message.shuffled_sigma_ciphertexts[1];
+    all_passed = ExpectTrue(
+        !protocol.VerifyRoundThree(tampered_shuffle_output_p2, p1),
+        "Round-three verification rejects a tampered shuffled sigma output") &&
         all_passed;
 
     PISCAProtocol::P2 tampered_round_three_p2 = p2;
@@ -588,6 +716,14 @@ int main()
                     .same_multi_scalar.ciphertexts.size() == p2.input.size(),
         "P1 RoundThree sends sigma ciphertexts and SameMultiScalar public input") &&
         all_passed;
+    all_passed = ExpectTrue(
+        p1.round_three.message.shuffled_sigma_ciphertexts.size() == p2.input.size() &&
+            ShuffledSigmaCiphertextsMatchWitness(
+                p1.round_three.message.shuffled_sigma_ciphertexts,
+                p1.round_three.witness.sigma,
+                p1.round_three.witness.sigma_permutation),
+        "P1 RoundThree shuffles derandomized (O, sigma) ciphertexts") &&
+        all_passed;
 
     ElGamalEnc comparison_elgamal;
     std::vector<ElGamalEnc::GroupElement> p1_outputs;
@@ -613,6 +749,8 @@ int main()
 
     PrintInputSet("P1", p1.input);
     PrintInputSet("P2", p2.input);
+    PrintRoundThreeShuffleData("P2 RoundThree over P1 data", p2);
+    PrintRoundThreeShuffleData("P1 RoundThree over P2 data", p1);
     PrintOutputElements("P1", p1_outputs);
     PrintOutputElements("P2", p2_outputs);
 

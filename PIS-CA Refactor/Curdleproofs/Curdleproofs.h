@@ -70,6 +70,12 @@ public:
         BIGNUM* rerandomization_scalar,
         std::vector<Ciphertext>& rerandomized_ciphertexts) const;
 
+    void RerandomizeCiphertextsWithScalars(
+        const PublicKey& public_key,
+        const std::vector<Ciphertext>& ciphertexts,
+        const std::vector<BIGNUM*>& rerandomization_scalars,
+        std::vector<Ciphertext>& rerandomized_ciphertexts) const;
+
     void PermuteCiphertexts(
         const std::vector<Ciphertext>& ciphertexts,
         const std::vector<std::size_t>& permutation,
@@ -79,6 +85,15 @@ public:
         const PublicKey& public_key,
         const CommitmentKey& commitment_key,
         const std::vector<Ciphertext>& ciphertexts,
+        PublicInstance& public_instance,
+        Witness& witness) const;
+
+    void InitializeKnownRerandomizedShuffle(
+        const PublicKey& public_key,
+        const CommitmentKey& commitment_key,
+        const std::vector<Ciphertext>& ciphertexts,
+        const std::vector<BIGNUM*>& rerandomization_scalars,
+        const std::vector<std::size_t>& permutation,
         PublicInstance& public_instance,
         Witness& witness) const;
 

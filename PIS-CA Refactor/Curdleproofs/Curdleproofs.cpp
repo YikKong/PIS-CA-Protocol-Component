@@ -44,6 +44,16 @@ bool IsPowerOfTwo(std::size_t value)
 {
     return value != 0 && (value & (value - 1)) == 0;
 }
+
+std::size_t NextPowerOfTwo(std::size_t value)
+{
+    std::size_t result = 1;
+    while (result < value)
+    {
+        result <<= 1;
+    }
+    return result;
+}
 }
 
 Curdleproofs::Curdleproofs(const ElGamalEnc& elgamal)
@@ -185,6 +195,80 @@ void Curdleproofs::RerandomizeCiphertexts(
     rerandomized_ciphertexts = std::move(next);
 }
 
+void Curdleproofs::RerandomizeCiphertextsWithScalars(
+    const PublicKey& public_key,
+    const std::vector<Ciphertext>& ciphertexts,
+    const std::vector<BIGNUM*>& rerandomization_scalars,
+    std::vector<Ciphertext>& rerandomized_ciphertexts) const
+{
+    const EC_GROUP* group = elgamal_.Group();
+    ThrowIf(
+        !elgamal_.IsValidPublicKey(public_key) ||
+            ciphertexts.empty() ||
+            ciphertexts.size() != rerandomization_scalars.size(),
+        "Curdleproofs per-ciphertext rerandomization input is invalid");
+
+    std::vector<Ciphertext> next;
+    next.reserve(ciphertexts.size());
+    EC_POINT* g_term = EC_POINT_new(group);
+    EC_POINT* pk_term = EC_POINT_new(group);
+    ThrowIf(
+        g_term == nullptr || pk_term == nullptr,
+        "Curdleproofs per-ciphertext rerandomization term allocation failed");
+
+    try
+    {
+        for (std::size_t i = 0; i < ciphertexts.size(); ++i)
+        {
+            const Ciphertext& ciphertext = ciphertexts[i];
+            const BIGNUM* scalar = rerandomization_scalars[i];
+            ThrowIf(
+                ciphertext.group != group ||
+                    !elgamal_.IsValidCiphertext(ciphertext) ||
+                    scalar == nullptr,
+                "Curdleproofs per-ciphertext rerandomization vector input is invalid");
+
+            Ciphertext randomized;
+            randomized.group = group;
+            randomized.u = EC_POINT_new(group);
+            randomized.e = EC_POINT_new(group);
+            ThrowIf(
+                randomized.u == nullptr ||
+                    randomized.e == nullptr ||
+                    EC_POINT_mul(
+                        group,
+                        g_term,
+                        nullptr,
+                        public_key.generator,
+                        scalar,
+                        bn_ctx_) != 1 ||
+                    EC_POINT_mul(
+                        group,
+                        pk_term,
+                        nullptr,
+                        public_key.pk,
+                        scalar,
+                        bn_ctx_) != 1 ||
+                    EC_POINT_copy(randomized.u, ciphertext.u) != 1 ||
+                    EC_POINT_add(group, randomized.u, randomized.u, g_term, bn_ctx_) != 1 ||
+                    EC_POINT_copy(randomized.e, ciphertext.e) != 1 ||
+                    EC_POINT_add(group, randomized.e, randomized.e, pk_term, bn_ctx_) != 1,
+                "Curdleproofs per-ciphertext rerandomization failed");
+            next.emplace_back(std::move(randomized));
+        }
+    }
+    catch (...)
+    {
+        EC_POINT_free(g_term);
+        EC_POINT_free(pk_term);
+        throw;
+    }
+
+    EC_POINT_free(g_term);
+    EC_POINT_free(pk_term);
+    rerandomized_ciphertexts = std::move(next);
+}
+
 void Curdleproofs::PermuteCiphertexts(
     const std::vector<Ciphertext>& ciphertexts,
     const std::vector<std::size_t>& permutation,
@@ -306,6 +390,182 @@ void Curdleproofs::InitializePublicInstance(
     BN_clear_free(k);
     BN_clear_free(r_A);
     BN_clear_free(r_M);
+}
+
+void Curdleproofs::InitializeKnownRerandomizedShuffle(
+    const PublicKey& public_key,
+    const CommitmentKey& commitment_key,
+    const std::vector<Ciphertext>& ciphertexts,
+    const std::vector<BIGNUM*>& rerandomization_scalars,
+    const std::vector<std::size_t>& permutation,
+    PublicInstance& public_instance,
+    Witness& witness) const
+{
+    ThrowIf(
+        !elgamal_.IsValidPublicKey(public_key) ||
+            ciphertexts.empty() ||
+            ciphertexts.size() != rerandomization_scalars.size() ||
+            !IsValidPermutation(permutation, ciphertexts.size()),
+        "Curdleproofs known-rerandomized shuffle input is invalid");
+
+    std::vector<BIGNUM*> challenge_vector;
+    std::vector<Ciphertext> rerandomized_ciphertexts;
+    std::vector<Ciphertext> permuted_ciphertexts;
+    std::vector<EC_POINT*> same_multi_h;
+    std::vector<BIGNUM*> same_multi_r_A;
+    BIGNUM* k = BN_new();
+    BIGNUM* r_A = BN_new();
+    BIGNUM* r_M = BN_new();
+    BIGNUM* sum_a = BN_new();
+    BIGNUM* weighted_rerandomization = BN_new();
+    BIGNUM* term = BN_new();
+    BIGNUM* inverse_sum_a = nullptr;
+    ThrowIf(
+        k == nullptr ||
+            r_A == nullptr ||
+            r_M == nullptr ||
+            sum_a == nullptr ||
+            weighted_rerandomization == nullptr ||
+            term == nullptr,
+        "Curdleproofs known-rerandomized shuffle scalar allocation failed");
+
+    try
+    {
+        bool challenge_ok = false;
+        for (std::size_t attempt = 0; attempt < 16 && !challenge_ok; ++attempt)
+        {
+            GenerateChallengeVector(ciphertexts.size(), challenge_vector);
+            ThrowIf(
+                BN_set_word(sum_a, 0) != 1 ||
+                    BN_set_word(weighted_rerandomization, 0) != 1,
+                "Curdleproofs known-rerandomized shuffle accumulator initialization failed");
+            for (std::size_t i = 0; i < ciphertexts.size(); ++i)
+            {
+                ThrowIf(
+                    rerandomization_scalars[i] == nullptr ||
+                        BN_mod_add(
+                            sum_a,
+                            sum_a,
+                            challenge_vector[i],
+                            elgamal_.Order(),
+                            bn_ctx_) != 1 ||
+                        BN_mod_mul(
+                            term,
+                            challenge_vector[i],
+                            rerandomization_scalars[i],
+                            elgamal_.Order(),
+                            bn_ctx_) != 1 ||
+                        BN_mod_add(
+                            weighted_rerandomization,
+                            weighted_rerandomization,
+                            term,
+                            elgamal_.Order(),
+                            bn_ctx_) != 1,
+                    "Curdleproofs known-rerandomized shuffle scalar arithmetic failed");
+            }
+
+            BN_clear_free(inverse_sum_a);
+            inverse_sum_a = BN_mod_inverse(nullptr, sum_a, elgamal_.Order(), bn_ctx_);
+            challenge_ok = inverse_sum_a != nullptr;
+        }
+        ThrowIf(
+            inverse_sum_a == nullptr ||
+                BN_mod_mul(
+                    k,
+                    weighted_rerandomization,
+                    inverse_sum_a,
+                    elgamal_.Order(),
+                    bn_ctx_) != 1,
+            "Curdleproofs known-rerandomized shuffle aggregate scalar failed");
+
+        RerandomizeCiphertextsWithScalars(
+            public_key,
+            ciphertexts,
+            rerandomization_scalars,
+            rerandomized_ciphertexts);
+        elgamal_.GenerateRandomScalar(r_A);
+        elgamal_.GenerateRandomScalar(r_M);
+
+        PublicInstance next_public;
+        Witness next_witness;
+
+        same_scalar_.InitializePublicInstance(
+            public_key,
+            commitment_key,
+            ciphertexts,
+            challenge_vector,
+            k,
+            next_public.same_scalar,
+            next_witness.same_scalar);
+
+        same_permutation_.InitializeSamePermutationProof(
+            challenge_vector,
+            permutation,
+            r_A,
+            r_M,
+            next_public.same_permutation,
+            next_witness.same_permutation);
+
+        PermuteCiphertexts(
+            rerandomized_ciphertexts,
+            permutation,
+            permuted_ciphertexts);
+
+        const std::size_t r_A_parts =
+            NextPowerOfTwo(ciphertexts.size() + 3) - ciphertexts.size() - 2;
+        BuildRepeatedPointVector(
+            next_public.same_permutation.h,
+            r_A_parts,
+            same_multi_h);
+        SplitScalar(
+            next_witness.same_permutation.r_A,
+            r_A_parts,
+            same_multi_r_A);
+
+        same_multi_scalar_.InitializePublicInstance(
+            commitment_key,
+            next_public.same_permutation.A,
+            next_public.same_scalar.cm_u,
+            next_public.same_scalar.cm_e,
+            permuted_ciphertexts,
+            next_public.same_permutation.g,
+            same_multi_h,
+            next_witness.same_permutation.sigma_a,
+            same_multi_r_A,
+            next_witness.same_scalar.r_u,
+            next_witness.same_scalar.r_e,
+            next_public.same_multi_scalar,
+            next_witness.same_multi_scalar);
+
+        next_public.output_ciphertexts = permuted_ciphertexts;
+        public_instance = std::move(next_public);
+        witness = std::move(next_witness);
+    }
+    catch (...)
+    {
+        FreeBNVector(challenge_vector);
+        FreePointVector(same_multi_h);
+        FreeBNVector(same_multi_r_A);
+        BN_clear_free(k);
+        BN_clear_free(r_A);
+        BN_clear_free(r_M);
+        BN_clear_free(sum_a);
+        BN_clear_free(weighted_rerandomization);
+        BN_clear_free(term);
+        BN_clear_free(inverse_sum_a);
+        throw;
+    }
+
+    FreeBNVector(challenge_vector);
+    FreePointVector(same_multi_h);
+    FreeBNVector(same_multi_r_A);
+    BN_clear_free(k);
+    BN_clear_free(r_A);
+    BN_clear_free(r_M);
+    BN_clear_free(sum_a);
+    BN_clear_free(weighted_rerandomization);
+    BN_clear_free(term);
+    BN_clear_free(inverse_sum_a);
 }
 
 void Curdleproofs::CreateProof(

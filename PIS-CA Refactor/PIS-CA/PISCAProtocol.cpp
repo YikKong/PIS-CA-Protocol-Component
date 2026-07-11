@@ -109,6 +109,76 @@ std::shared_ptr<BIGNUM> ZZToBignum(const NTL::ZZ& value)
     return std::shared_ptr<BIGNUM>(result, BN_clear_free);
 }
 
+std::shared_ptr<BIGNUM> ModNegateBignum(
+    const BIGNUM* value,
+    const BIGNUM* modulus)
+{
+    ThrowIf(value == nullptr || modulus == nullptr, "BIGNUM modular negation input is null");
+    BN_CTX* context = BN_CTX_new();
+    ThrowIf(context == nullptr, "BIGNUM modular negation context allocation failed");
+    BIGNUM* result = BN_new();
+    try
+    {
+        ThrowIf(
+            result == nullptr ||
+                BN_mod_sub(result, modulus, value, modulus, context) != 1,
+            "BIGNUM modular negation failed");
+    }
+    catch (...)
+    {
+        BN_clear_free(result);
+        BN_CTX_free(context);
+        throw;
+    }
+    BN_CTX_free(context);
+    return std::shared_ptr<BIGNUM>(result, BN_clear_free);
+}
+
+bool CiphertextsEqual(
+    const ElGamalEnc::Ciphertext& left,
+    const ElGamalEnc::Ciphertext& right)
+{
+    if (left.group == nullptr ||
+        right.group == nullptr ||
+        left.group != right.group ||
+        left.u == nullptr ||
+        left.e == nullptr ||
+        right.u == nullptr ||
+        right.e == nullptr)
+    {
+        return false;
+    }
+
+    BN_CTX* context = BN_CTX_new();
+    if (context == nullptr)
+    {
+        return false;
+    }
+    const bool equal =
+        EC_POINT_cmp(left.group, left.u, right.u, context) == 0 &&
+        EC_POINT_cmp(left.group, left.e, right.e, context) == 0;
+    BN_CTX_free(context);
+    return equal;
+}
+
+bool CiphertextVectorsEqual(
+    const std::vector<ElGamalEnc::Ciphertext>& left,
+    const std::vector<ElGamalEnc::Ciphertext>& right)
+{
+    if (left.size() != right.size())
+    {
+        return false;
+    }
+    for (std::size_t i = 0; i < left.size(); ++i)
+    {
+        if (!CiphertextsEqual(left[i], right[i]))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 NTL::ZZ GenerateDoprfKey(const BIGNUM* elgamal_order)
 {
     const NTL::ZZ q = BignumToZZ(elgamal_order);
@@ -122,7 +192,8 @@ PISCAProtocol::PISCAProtocol()
     : camenisch_shoup_zkp_(camenisch_shoup_),
       elgamal_(),
       sigma_argument_commitment_(elgamal_),
-      sigma_ciphertext_argument_(elgamal_)
+      sigma_ciphertext_argument_(elgamal_),
+      curdleproofs_(elgamal_)
 {
 }
 
@@ -307,7 +378,19 @@ bool PISCAProtocol::VerifyRoundThree(
             decryption_party.round_three.message.proof_message
                 .elgamal_beta_commitments,
             decryption_party.round_three.message.sigma_ciphertexts,
-            decryption_party.round_three.message.sigma_proof_message);
+            decryption_party.round_three.message.sigma_proof_message) &&
+        CiphertextVectorsEqual(
+            decryption_party.round_three.message
+                .sigma_shuffle_public_instance.same_scalar.ciphertexts,
+            decryption_party.round_three.message.sigma_ciphertexts) &&
+        CiphertextVectorsEqual(
+            decryption_party.round_three.message
+                .sigma_shuffle_public_instance.output_ciphertexts,
+            decryption_party.round_three.message.shuffled_sigma_ciphertexts) &&
+        curdleproofs_.VerifyProof(
+            decryption_party.sigma_argument_commitment_key,
+            decryption_party.round_three.message.sigma_shuffle_public_instance,
+            decryption_party.round_three.message.sigma_shuffle_proof_message);
 }
 
 bool PISCAProtocol::CamenischShoupParametersAreIndependent(
@@ -711,4 +794,39 @@ void PISCAProtocol::GenerateRoundThreeState(
         state.witness.sigma_proof);
     state.message.sigma_proof_message =
         state.witness.sigma_proof.message;
+
+    state.witness.sigma_derandomization_randomness.reserve(sigma_count);
+    std::vector<BIGNUM*> derandomization_randomness;
+    derandomization_randomness.reserve(sigma_count);
+    for (const std::shared_ptr<BIGNUM>& randomness :
+         state.witness.sigma_encryption_randomness)
+    {
+        state.witness.sigma_derandomization_randomness.emplace_back(
+            ModNegateBignum(randomness.get(), elgamal_.Order()));
+        derandomization_randomness.emplace_back(
+            state.witness.sigma_derandomization_randomness.back().get());
+    }
+
+    curdleproofs_.GeneratePermutation(
+        sigma_count,
+        state.witness.sigma_permutation);
+    curdleproofs_.InitializeKnownRerandomizedShuffle(
+        decryption_party.elgamal_public_key,
+        decryption_party.sigma_argument_commitment_key,
+        state.message.sigma_ciphertexts,
+        derandomization_randomness,
+        state.witness.sigma_permutation,
+        state.witness.sigma_shuffle_proof.public_instance,
+        state.witness.sigma_shuffle_proof.witness);
+    curdleproofs_.CreateProof(
+        decryption_party.sigma_argument_commitment_key,
+        state.witness.sigma_shuffle_proof.public_instance,
+        state.witness.sigma_shuffle_proof.witness,
+        state.witness.sigma_shuffle_proof);
+    state.message.shuffled_sigma_ciphertexts =
+        state.witness.sigma_shuffle_proof.public_instance.output_ciphertexts;
+    state.message.sigma_shuffle_public_instance =
+        state.witness.sigma_shuffle_proof.public_instance;
+    state.message.sigma_shuffle_proof_message =
+        state.witness.sigma_shuffle_proof.message;
 }

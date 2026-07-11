@@ -9,6 +9,7 @@
 
 #include "../CamenischShoup/CamenischShoupEnc.h"
 #include "../CamenischShoup/CamenischShoupEncZKP.h"
+#include "../Curdleproofs/Curdleproofs.h"
 #include "../Curdleproofs/ElGamalCommitment/ElGamalCommitment.h"
 #include "../ElGamal/ElGamalEnc.h"
 #include "SigmaCiphertextArgument.h"
@@ -67,6 +68,9 @@ public:
         CamenischShoupEncZKP::DecProofMessage proof_message;
         std::vector<ElGamalEnc::Ciphertext> sigma_ciphertexts;
         SigmaCiphertextArgument::ProofMessage sigma_proof_message;
+        std::vector<ElGamalEnc::Ciphertext> shuffled_sigma_ciphertexts;
+        Curdleproofs::PublicInstance sigma_shuffle_public_instance;
+        Curdleproofs::ProofMessage sigma_shuffle_proof_message;
     };
 
     struct RoundThreeWitness
@@ -76,6 +80,9 @@ public:
         std::vector<ElGamalEnc::GroupElement> sigma;
         std::vector<std::shared_ptr<BIGNUM>> sigma_encryption_randomness;
         SigmaCiphertextArgument::Proof sigma_proof;
+        std::vector<std::shared_ptr<BIGNUM>> sigma_derandomization_randomness;
+        std::vector<std::size_t> sigma_permutation;
+        Curdleproofs::Proof sigma_shuffle_proof;
     };
 
     struct RoundThreeState
@@ -166,6 +173,7 @@ private:
     ElGamalEnc elgamal_;
     ElGamalCommitment sigma_argument_commitment_;
     SigmaCiphertextArgument sigma_ciphertext_argument_;
+    Curdleproofs curdleproofs_;
 };
 
 #endif // PISCA_PROTOCOL_H
